@@ -1,0 +1,18 @@
+[package]
+name = "kubus_derive"
+description = "Derive based kubernetes operator framework"
+version = "0.1.0"
+edition = "2024"
+homepage = "https://github.com/juliamertz/kubus"
+repository = "https://github.com/juliamertz/kubus"
+license = "MIT"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+k8s-openapi = { workspace = true }
+kube = { workspace = true }
+syn = { version = "2", features = ["extra-traits", "full"] }
+quote = "1"
+proc-macro2 = "1"

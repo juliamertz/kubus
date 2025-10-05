@@ -1,0 +1,23 @@
+[package]
+name = "kubus"
+description = "Derive based kubernetes operator framework"
+version = "0.1.0"
+edition = "2024"
+homepage = "https://github.com/juliamertz/kubus"
+repository = "https://github.com/juliamertz/kubus"
+license = "MIT"
+
+[dependencies]
+kubus_derive = { path = "../kubus_derive", version = "0.1.0" }
+k8s-openapi = { workspace = true }
+kube = { workspace = true }
+tokio = { version = "1.47.1", features = ["full"] }
+tracing = "0.1.41"
+tracing-subscriber = "0.3.20"
+futures = "0.3.31"
+futures-util = "0.3.31"
+inventory = "0.3.21"
+json-patch = "4"
+schemars = "1.0.4"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"

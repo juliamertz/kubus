@@ -1,0 +1,10 @@
+[workspace]
+resolver = "3"
+members = ["kubus", "kubus_derive"]
+
+[workspace.dependencies]
+k8s-openapi = { version = "0.26.0", features = ["v1_34"] }
+kube = { version = "2.0.1", features = ["runtime", "derive"] }
+futures = "0.3.31"
+futures-util = "0.3.31"
+inventory = "0.3.21"
