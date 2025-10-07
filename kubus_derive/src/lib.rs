@@ -26,11 +26,8 @@ impl Attrs {
     }
 }
 
-fn extract_resource_type(func: &ItemFn) -> proc_macro2::TokenStream {
-    if let Some(arg) = func.sig.inputs.first()
-        && let syn::FnArg::Typed(pat_type) = arg
-        && let syn::Type::Path(type_path) = &*pat_type.ty
-    {
+fn extract_inner_arc(ty: &Type) -> proc_macro2::TokenStream {
+    if let syn::Type::Path(type_path) = ty {
         if let Some(last_segment) = type_path.path.segments.last()
             && last_segment.ident == "Arc"
             && let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments
@@ -40,7 +37,27 @@ fn extract_resource_type(func: &ItemFn) -> proc_macro2::TokenStream {
         }
         return quote! { #type_path };
     }
-    panic!("Function must have a resource parameter");
+    panic!("Cannot extract from type as Arc");
+}
+
+fn extract_resource_type(func: &ItemFn) -> proc_macro2::TokenStream {
+    if let Some(arg) = func.sig.inputs.first()
+        && let syn::FnArg::Typed(pat_type) = arg
+    {
+        extract_inner_arc(&pat_type.ty)
+    } else {
+        panic!("Function must have a resource parameter");
+    }
+}
+
+fn extract_context_type(func: &ItemFn) -> proc_macro2::TokenStream {
+    if let Some(arg) = func.sig.inputs.iter().nth(1)
+        && let syn::FnArg::Typed(pat_type) = arg
+    {
+        extract_inner_arc(&pat_type.ty)
+    } else {
+        panic!("Function must have a resource parameter");
+    }
 }
 
 fn get_event_type(event_name: Ident) -> proc_macro2::TokenStream {
@@ -52,86 +69,98 @@ fn get_event_type(event_name: Ident) -> proc_macro2::TokenStream {
     }
 }
 
+fn internal_prefix(ident: Ident) -> Ident {
+    let value = ident.to_string();
+    let prefixed = format!("__Kubus_{value}");
+    Ident::new(&prefixed, ident.span())
+}
+
 #[proc_macro_attribute]
 pub fn kubus(args: TokenStream, input: TokenStream) -> TokenStream {
     let mut attrs = Attrs::default();
     let attr_parser = syn::meta::parser(|meta| attrs.parse(meta));
     parse_macro_input!(args with attr_parser);
 
-    let input = parse_macro_input!(input as ItemFn);
-    let resource_ty = extract_resource_type(&input);
+    let func = parse_macro_input!(input as ItemFn);
+    let resource_ty = extract_resource_type(&func);
+    let context_ty = extract_context_type(&func);
     let event_type = get_event_type(attrs.event.expect("event kubus attribute missing"));
 
-    let fn_name = &input.sig.ident;
-    let struct_name = Ident::new(&format!("__Kubus_{}", fn_name), fn_name.span());
+    let internal_func = {
+        let mut func = func.clone();
+        func.sig.ident = internal_prefix(func.sig.ident);
+        func
+    };
+
+    let struct_name = func.sig.ident;
+    let internal_func_name = internal_func.sig.ident.clone();
+
+    let finalizer = attrs
+        .finalizer
+        .map(|name| quote! { Some(#name) })
+        .unwrap_or_else(|| quote! { None });
 
     quote! {
-        #[inline]
-        #input
+        #[allow(non_snake_case)]
+        #internal_func
 
         #[allow(non_camel_case_types)]
         #[doc(hidden)]
         pub struct #struct_name;
 
-        impl #struct_name {
-            pub async fn handler(
-                resource: ::std::sync::Arc<#resource_ty>,
-                context: ::std::sync::Arc<::kubus::Context>
-            ) -> ::kubus::Result<::kubus::kube::runtime::controller::Action> {
-                use ::kubus::kube::{Resource, ResourceExt};
-                if let (::kubus::EventType::Apply, Some(_)) | (::kubus::EventType::Delete, None) =
-                    (#event_type, resource.meta().deletion_timestamp.as_ref())
-                {
-                    return Ok(::kubus::kube::runtime::controller::Action::requeue(Duration::from_secs(60)));
-                }
-
-                #fn_name(resource, context).await
-            }
-
-            pub fn error_policy(
-                resource: ::std::sync::Arc<#resource_ty>,
-                err: &::kubus::Error,
-                ctx: Arc<::kubus::Context>
-            ) -> ::kubus::kube::runtime::controller::Action {
-                tracing::warn!("Reconciliation error: {:?}", err);
-
-                ::kubus::kube::runtime::controller::Action::requeue(Duration::from_secs(60))
-            }
-
-
-            pub async fn watch(client: kube::Client) -> ::kubus::Result<()> {
-                use futures::StreamExt;
-                use kube::runtime::watcher::{self, Event, Config};
-                use kube::{Resource, ResourceExt};
-                use kube::runtime::controller::Controller;
-
-                let api = ::kubus::kube::Api::<#resource_ty>::all(client.clone());
-                let context = ::kubus::Context { client };
-                let controller = Controller::new(api, Config::default())
-                    .shutdown_on_signal()
-                    .run(Self::handler, Self::error_policy, ::std::sync::Arc::new(context))
-                    .filter_map(|x| async move { std::result::Result::ok(x) })
-                    .for_each(|_| futures::future::ready(()));
-
-                // TODO: why is this needed?
-                tokio::select! {
-                    _ = controller => {
-                        tracing::info!("controller finished");
-                        ::std::process::exit(1);
+        impl ::kubus::EventHandler<#resource_ty, #context_ty> for #struct_name {
+            fn handler<'async_trait>(
+                resource: Arc<#resource_ty>,
+                context: Arc<Context>,
+            ) -> ::core::pin::Pin<
+                Box<
+                    dyn ::core::future::Future<Output = Result<Action>>
+                        + ::core::marker::Send
+                        + 'async_trait,
+                >,
+            > {
+                Box::pin(async move {
+                    if let ::core::option::Option::Some(__ret) =
+                        ::core::option::Option::None::<Result<Action>>
+                    {
+                        #[allow(unreachable_code)]
+                        return __ret;
                     }
-                    _ = tokio::signal::ctrl_c() => {
-                        tracing::info!("received shutdown signal");
-                    }
-                }
+                    let resource = resource;
+                    let context = context;
+                    let __ret: Result<Action> = {
+                        use ::kubus::ScopeExt;
+                        use ::kubus::kube::{Resource, ResourceExt};
 
-                Ok(())
-            }
-        }
+                        if let (::kubus::EventType::Apply, Some(_)) | (::kubus::EventType::Delete, None) =
+                            (#event_type, resource.meta().deletion_timestamp.as_ref())
+                        {
+                            return Ok(::kubus::kube::runtime::controller::Action::requeue(Duration::from_secs(15)));
+                        }
 
-        ::kubus::inventory::submit! {
-            ::kubus::Handler {
-                name: stringify!(#fn_name),
-                watch_fn: |client| Box::pin(#struct_name::watch(client)),
+                        #internal_func_name(resource.clone(), context).await?;
+
+                        // TODO: store shared client in context wrapper
+                        let client = ::kubus::kube::Client::try_default().await?;
+
+                        if let Some(finalizer) = #finalizer {
+                            let namespace = resource.namespace();
+                            let api: kube::Api<Pod> =
+                                <#resource_ty as ::kubus::kube::Resource>::Scope::api(client, namespace);
+
+                            ::kubus::update_finalizer(
+                                &api,
+                                &finalizer,
+                                #event_type,
+                                resource
+                            ).await?;
+                        }
+
+                        Ok(Action::requeue(::std::time::Duration::from_secs(15)))
+                    };
+                    #[allow(unreachable_code)]
+                    __ret
+                })
             }
         }
     }

@@ -32,7 +32,7 @@
         in
           with pkgs;
           with toolchain; [
-            
+            cargo-expand 
             rust-analyzer
             clippy
           ];

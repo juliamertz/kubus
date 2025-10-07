@@ -11,8 +11,6 @@ license = "MIT"
 proc-macro = true
 
 [dependencies]
-k8s-openapi = { workspace = true }
-kube = { workspace = true }
 syn = { version = "2", features = ["extra-traits", "full"] }
 quote = "1"
 proc-macro2 = "1"

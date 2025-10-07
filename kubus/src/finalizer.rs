@@ -33,12 +33,17 @@ impl FinalizerState {
     }
 }
 
+/// Update the finalizer of a kubernetes resource
+///
+/// The behaviour of this function depends on the `event_type` passed in
+/// for `Apply` the finalizer is appended to the current list of finalizers
+/// Otherwise for `Delete` events the finalizer is removed from the list
 pub async fn update_finalizer<K>(
     api: &Api<K>,
     finalizer_name: &str,
     event_type: EventType,
     obj: Arc<K>,
-) -> Result<(), Box<dyn std::error::Error>>
+) -> Result<(), crate::Error>
 where
     K: Resource + Clone + Debug + Serialize + DeserializeOwned,
 {
@@ -82,7 +87,7 @@ where
         }
 
         (
-            EventType::Apply | EventType::InitApply,
+            EventType::Apply,
             FinalizerState {
                 finalizer_index: None,
                 is_deleting: false,
