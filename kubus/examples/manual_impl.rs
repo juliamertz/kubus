@@ -13,7 +13,7 @@ struct Context {
 async fn main() -> Result<(), Box<dyn Error>> {
     let context = Context { _do_thing: true };
     let client = Client::try_default().await?;
-    let operator = Operator::with_client(client, context).handler(PodApplyHandler);
+    let operator = Operator::new(client, context).handler(PodApplyHandler);
 
     operator.run().await?;
 

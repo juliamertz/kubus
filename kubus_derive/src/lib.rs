@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{Ident, ItemFn, LitStr, Type, meta::ParseNestedMeta, parse_macro_input};
+use syn::{FnArg, Ident, ItemFn, LitStr, Type, meta::ParseNestedMeta, parse_macro_input};
 
 #[derive(Default)]
 struct Attrs {
@@ -26,38 +26,41 @@ impl Attrs {
     }
 }
 
-fn extract_inner_arc(ty: &Type) -> proc_macro2::TokenStream {
+fn extract_inner_type(ty: &Type) -> &Type {
     if let syn::Type::Path(type_path) = ty {
         if let Some(last_segment) = type_path.path.segments.last()
-            && last_segment.ident == "Arc"
             && let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments
             && let Some(syn::GenericArgument::Type(inner_type)) = args.args.first()
         {
-            return quote! { #inner_type };
+            return inner_type;
         }
-        return quote! { #type_path };
     }
     panic!("Cannot extract from type as Arc");
 }
 
-fn extract_resource_type(func: &ItemFn) -> proc_macro2::TokenStream {
-    if let Some(arg) = func.sig.inputs.first()
-        && let syn::FnArg::Typed(pat_type) = arg
-    {
-        extract_inner_arc(&pat_type.ty)
-    } else {
-        panic!("Function must have a resource parameter");
-    }
+fn extract_func_arg(func: &ItemFn, n: usize) -> Option<&FnArg> {
+    func.sig.inputs.iter().nth(n)
 }
 
-fn extract_context_type(func: &ItemFn) -> proc_macro2::TokenStream {
-    if let Some(arg) = func.sig.inputs.iter().nth(1)
-        && let syn::FnArg::Typed(pat_type) = arg
-    {
-        extract_inner_arc(&pat_type.ty)
-    } else {
-        panic!("Function must have a resource parameter");
-    }
+fn extract_resource_type(func: &ItemFn) -> &Type {
+    extract_func_arg(func, 0)
+        .and_then(|arg| match arg {
+            FnArg::Typed(pat) => Some(pat),
+            FnArg::Receiver(_) => None,
+        })
+        .map(|pat| extract_inner_type(&pat.ty))
+        .expect("unable to extract resource type from handler function")
+}
+
+fn extract_context_type(func: &ItemFn) -> &Type {
+    extract_func_arg(func, 1)
+        .and_then(|arg| match arg {
+            FnArg::Typed(pat) => Some(pat),
+            FnArg::Receiver(_) => None,
+        })
+        .map(|arc| extract_inner_type(&arc.ty))
+        .map(|ctx| extract_inner_type(&ctx))
+        .expect("unable to extract resource type from handler function")
 }
 
 fn get_event_type(event_name: Ident) -> proc_macro2::TokenStream {
@@ -71,7 +74,7 @@ fn get_event_type(event_name: Ident) -> proc_macro2::TokenStream {
 
 fn internal_prefix(ident: Ident) -> Ident {
     let value = ident.to_string();
-    let prefixed = format!("__Kubus_{value}");
+    let prefixed = format!("__kubus_{value}");
     Ident::new(&prefixed, ident.span())
 }
 
@@ -92,7 +95,7 @@ pub fn kubus(args: TokenStream, input: TokenStream) -> TokenStream {
         func
     };
 
-    let struct_name = func.sig.ident;
+    let struct_name = func.sig.ident.clone();
     let internal_func_name = internal_func.sig.ident.clone();
 
     let finalizer = attrs
@@ -111,7 +114,7 @@ pub fn kubus(args: TokenStream, input: TokenStream) -> TokenStream {
         impl ::kubus::EventHandler<#resource_ty, #context_ty> for #struct_name {
             fn handler<'async_trait>(
                 resource: Arc<#resource_ty>,
-                context: Arc<Context>,
+                context: Arc<::kubus::Context<#context_ty>>,
             ) -> ::core::pin::Pin<
                 Box<
                     dyn ::core::future::Future<Output = Result<Action>>
@@ -138,10 +141,9 @@ pub fn kubus(args: TokenStream, input: TokenStream) -> TokenStream {
                             return Ok(::kube::runtime::controller::Action::requeue(Duration::from_secs(15)));
                         }
 
-                        #internal_func_name(resource.clone(), context).await?;
+                        #internal_func_name(resource.clone(), context.clone()).await?;
 
-                        // TODO: store shared client in context wrapper
-                        let client = ::kube::Client::try_default().await?;
+                        let client = context.client.clone();
 
                         if let Some(finalizer) = #finalizer {
                             let namespace = resource.namespace();

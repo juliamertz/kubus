@@ -3,17 +3,15 @@
 //! Provides abstractions for building Kubernetes operators using the `#[kubus]` derive macro
 //! to implement event handlers for custom resources.
 
-// #![warn(clippy::all)]
+#![warn(clippy::all)]
 #![warn(clippy::pedantic)]
 #![warn(clippy::nursery)]
 #![warn(clippy::cargo)]
-// Built-in lints
 #![warn(missing_docs)]
 #![warn(rust_2018_idioms)]
 #![warn(unused)]
 #![forbid(unsafe_code)]
 #![deny(warnings)]
-
 #![warn(clippy::unwrap_used)]
 #![warn(clippy::expect_used)]
 #![warn(clippy::panic)]
@@ -101,9 +99,6 @@ where
     }
 }
 
-/// A specialized Result type for Kubus operations
-pub type Result<T, E = Error> = std::result::Result<T, E>;
-
 trait DynEventHandler: Send + Sync {
     fn run(&self, client: Client) -> BoxFuture<'static, Result<()>>;
 }
@@ -123,13 +118,13 @@ where
     ///
     /// Called when a resource is created, updated, or needs reconciliation.
     /// Returns an `Action` indicating when to reconcile again.
-    async fn handler(resource: Arc<K>, context: Arc<Ctx>) -> Result<Action>;
+    async fn handler(resource: Arc<K>, context: Arc<Context<Ctx>>) -> Result<Action>;
 
     /// Defines error handling policy for the handler
     ///
     /// Called when `handler` returns an error. Default implementation logs a warning
     /// and requeues after 5 seconds.
-    fn error_policy(_resource: Arc<K>, err: &Error, _ctx: Arc<Ctx>) -> Action {
+    fn error_policy(_resource: Arc<K>, err: &Error, _ctx: Arc<Context<Ctx>>) -> Action {
         tracing::warn!("Reconciliation error: {:?}", err);
         Action::requeue(Duration::from_secs(5))
     }
@@ -137,7 +132,7 @@ where
     /// Starts the controller watching for resource events
     ///
     /// Runs until the process receives a shutdown signal.
-    async fn watch(client: Client, context: Arc<Ctx>) -> Result<()>
+    async fn watch(client: Client, context: Arc<Context<Ctx>>) -> Result<()>
     where
         Self: Sized,
     {
@@ -162,7 +157,7 @@ where
     K::DynamicType: Clone + Debug + Default + Hash + Unpin + Eq,
     Ctx: Send + Sync + 'static,
 {
-    context: Arc<Ctx>,
+    context: Arc<Context<Ctx>>,
     _phantom: std::marker::PhantomData<(H, K)>,
 }
 
@@ -173,7 +168,7 @@ where
     K::DynamicType: Clone + Debug + Default + Hash + Unpin + Eq,
     Ctx: Send + Sync + 'static,
 {
-    const fn new(context: Arc<Ctx>) -> Self {
+    const fn new(context: Arc<Context<Ctx>>) -> Self {
         Self {
             context,
             _phantom: std::marker::PhantomData,
@@ -193,6 +188,9 @@ where
         H::watch(client, context)
     }
 }
+
+/// A specialized Result type for Kubus operations
+pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// Kubernetes resource event types
 #[derive(Debug, PartialEq, Eq)]
@@ -218,12 +216,19 @@ impl FromStr for EventType {
     }
 }
 
+/// Shared handler context
+pub struct Context<T> {
+    /// Kube client
+    pub client: Client,
+    /// User defined data type
+    pub data: T,
+}
+
 /// Kubernetes operator managing multiple resource handlers
 ///
 /// Use with the `#[kubus]` derive macro to register handlers for different resource types.
 pub struct Operator<Ctx> {
-    client: Client,
-    context: Arc<Ctx>,
+    context: Arc<Context<Ctx>>,
     handlers: Vec<Box<dyn DynEventHandler>>,
 }
 
@@ -231,22 +236,10 @@ impl<Ctx> Operator<Ctx>
 where
     Ctx: Send + Sync + 'static,
 {
-    /// Creates a new operator with the default Kubernetes client
-    ///
-    /// Uses standard kubeconfig resolution.
-    pub async fn new(context: Ctx) -> Result<Self> {
-        let client = Client::try_default().await?;
-        Ok(Self {
-            client,
-            context: Arc::new(context),
-            handlers: Default::default(),
-        })
-    }
-
-    /// Creates a new operator with a custom Kubernetes client
-    pub fn with_client(client: Client, context: Ctx) -> Self {
+    /// Creates a new operator
+    pub fn new(client: Client, data: Ctx) -> Self {
+        let context = Context { client, data };
         Self {
-            client,
             context: Arc::new(context),
             handlers: Default::default(),
         }
@@ -280,7 +273,7 @@ where
             .handlers
             .into_iter()
             .map(|handler| {
-                let client = self.client.clone();
+                let client = self.context.client.clone();
                 tokio::spawn(async move {
                     tracing::info!("starting handler");
                     let client = client.clone();
