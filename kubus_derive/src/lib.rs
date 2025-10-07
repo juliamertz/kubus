@@ -130,23 +130,23 @@ pub fn kubus(args: TokenStream, input: TokenStream) -> TokenStream {
                     let context = context;
                     let __ret: Result<Action> = {
                         use ::kubus::ScopeExt;
-                        use ::kubus::kube::{Resource, ResourceExt};
+                        use ::kube::{Resource, ResourceExt};
 
                         if let (::kubus::EventType::Apply, Some(_)) | (::kubus::EventType::Delete, None) =
                             (#event_type, resource.meta().deletion_timestamp.as_ref())
                         {
-                            return Ok(::kubus::kube::runtime::controller::Action::requeue(Duration::from_secs(15)));
+                            return Ok(::kube::runtime::controller::Action::requeue(Duration::from_secs(15)));
                         }
 
                         #internal_func_name(resource.clone(), context).await?;
 
                         // TODO: store shared client in context wrapper
-                        let client = ::kubus::kube::Client::try_default().await?;
+                        let client = ::kube::Client::try_default().await?;
 
                         if let Some(finalizer) = #finalizer {
                             let namespace = resource.namespace();
-                            let api: kube::Api<Pod> =
-                                <#resource_ty as ::kubus::kube::Resource>::Scope::api(client, namespace);
+                            let api: ::kube::Api<#resource_ty> =
+                                <#resource_ty as ::kube::Resource>::Scope::api(client, namespace);
 
                             ::kubus::update_finalizer(
                                 &api,
