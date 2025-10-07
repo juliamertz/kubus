@@ -4,6 +4,7 @@ use k8s_openapi::api::core::v1::Pod;
 use kube::{Client, ResourceExt, runtime::controller::Action};
 use kubus::{Context, HandlerError, Operator, kubus};
 
+#[derive(Debug, Clone)]
 struct State {}
 
 #[tokio::main]
@@ -11,15 +12,16 @@ async fn main() -> Result<(), kubus::Error> {
     let client = Client::try_default().await?;
     let state = State {};
 
-    Operator::new(client, state)
-        .handler(apply_pod)
-        .handler(cleanup_pod)
+    Operator::builder()
+        .with_context((client, state))
+        .handler(on_pod_apply)
+        .handler(on_pod_delete)
         .run()
         .await
 }
 
 #[kubus(event = Apply, finalizer = "kubus.io/cleanup")]
-async fn apply_pod(pod: Arc<Pod>, _ctx: Arc<Context<State>>) -> Result<Action, HandlerError> {
+async fn on_pod_apply(pod: Arc<Pod>, _ctx: Arc<Context<State>>) -> Result<Action, HandlerError> {
     let name = pod.name_unchecked();
     let namespace = pod.namespace().unwrap();
 
@@ -29,7 +31,7 @@ async fn apply_pod(pod: Arc<Pod>, _ctx: Arc<Context<State>>) -> Result<Action, H
 }
 
 #[kubus(event = Delete, finalizer = "kubus.io/cleanup")]
-async fn cleanup_pod(pod: Arc<Pod>, _ctx: Arc<Context<State>>) -> Result<Action, HandlerError> {
+async fn on_pod_delete(pod: Arc<Pod>, _ctx: Arc<Context<State>>) -> Result<Action, HandlerError> {
     let name = pod.name_unchecked();
     let namespace = pod.namespace().unwrap();
 

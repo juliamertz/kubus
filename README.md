@@ -18,14 +18,15 @@ async fn main() -> Result<(), kubus::Error> {
     let client = Client::try_default().await?;
     let state = State {};
 
-    Operator::new(client, state)
-        .handler(apply_pod)
+    Operator::builder()
+        .with_context((client, state))
+        .handler(on_pod_apply)
         .run()
-        .await?
+        .await
 }
 
 #[kubus(event = Apply, finalizer = "kubus.io/cleanup")]
-async fn apply_pod(pod: Arc<Pod>, _ctx: Arc<Context<State>>) -> Result<Action, HandlerError> {
+async fn on_pod_apply(pod: Arc<Pod>, _ctx: Arc<Context<State>>) -> Result<Action, HandlerError> {
     let name = pod.name_unchecked();
     let namespace = pod.namespace().unwrap();
 

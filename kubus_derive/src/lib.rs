@@ -26,13 +26,12 @@ impl Attrs {
 }
 
 fn extract_generic_arg(ty: &Type, pos: usize) -> Option<&Type> {
-    if let syn::Type::Path(type_path) = ty {
-        if let Some(last_segment) = type_path.path.segments.get(pos)
-            && let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments
-            && let Some(syn::GenericArgument::Type(inner_type)) = args.args.first()
-        {
-            return Some(inner_type);
-        }
+    if let syn::Type::Path(type_path) = ty
+        && let Some(last_segment) = type_path.path.segments.get(pos)
+        && let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments
+        && let Some(syn::GenericArgument::Type(inner_type)) = args.args.first()
+    {
+        return Some(inner_type);
     }
     None
 }
@@ -66,7 +65,7 @@ fn extract_context_type(func: &ItemFn) -> Option<&Type> {
         .nth(1)
         .and_then(|arg| extract_func_arg_type(arg))
         .and_then(|arc| extract_generic_arg(&arc.ty, 0))
-        .and_then(|ctx| extract_generic_arg(&ctx, 0))
+        .and_then(|ctx| extract_generic_arg(ctx, 0))
 }
 
 fn extract_function_return_error_type(func: &ItemFn) -> Option<&Type> {
@@ -126,7 +125,6 @@ pub fn kubus(args: TokenStream, input: TokenStream) -> TokenStream {
         #[doc(hidden)]
         pub struct #struct_name;
 
-        // TODO: supply custom error type with attrs
         impl ::kubus::EventHandler<#resource_ty, #context_ty, #error_ty> for #struct_name {
             fn handler<'async_trait>(
                 resource: ::std::sync::Arc<#resource_ty>,
