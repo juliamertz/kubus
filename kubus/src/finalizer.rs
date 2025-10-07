@@ -11,6 +11,8 @@ use kube::{
     api::{Patch, PatchParams},
 };
 
+use crate::EventType;
+
 #[derive(Debug)]
 struct FinalizerState {
     finalizer_index: Option<usize>,
@@ -34,21 +36,31 @@ impl FinalizerState {
 pub async fn update_finalizer<K>(
     api: &Api<K>,
     finalizer_name: &str,
+    event_type: EventType,
     obj: Arc<K>,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
     K: Resource + Clone + Debug + Serialize + DeserializeOwned,
 {
-    match FinalizerState::for_object(&*obj, finalizer_name) {
-        FinalizerState {
-            finalizer_index: Some(_),
-            is_deleting: false,
-        } => Ok(()),
+    match (
+        event_type,
+        FinalizerState::for_object(&*obj, finalizer_name),
+    ) {
+        (
+            _,
+            FinalizerState {
+                finalizer_index: Some(_),
+                is_deleting: false,
+            },
+        ) => Ok(()),
 
-        FinalizerState {
-            finalizer_index: Some(i),
-            is_deleting: true,
-        } => {
+        (
+            EventType::Delete,
+            FinalizerState {
+                finalizer_index: Some(i),
+                is_deleting: true,
+            },
+        ) => {
             let name = obj.meta().name.clone().unwrap();
             let finalizer_path = format!("/metadata/finalizers/{i}");
 
@@ -69,10 +81,13 @@ where
             Ok(())
         }
 
-        FinalizerState {
-            finalizer_index: None,
-            is_deleting: false,
-        } => {
+        (
+            EventType::Apply | EventType::InitApply,
+            FinalizerState {
+                finalizer_index: None,
+                is_deleting: false,
+            },
+        ) => {
             // Finalizer must be added before it's safe to run an `Apply` reconciliation
             let patch = if obj.finalizers().is_empty() {
                 json!([

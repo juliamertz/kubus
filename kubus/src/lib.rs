@@ -1,4 +1,4 @@
-use std::pin::Pin;
+use std::{pin::Pin, str::FromStr};
 
 use futures::future;
 use kube::Client;
@@ -10,7 +10,23 @@ pub mod finalizer;
 pub use finalizer::update_finalizer;
 pub use kubus_derive::kubus;
 
-pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("SerializationError: {0}")]
+    SerializationError(#[source] serde_json::Error),
+
+    #[error("Kube Error: {0}")]
+    KubeError(#[from] kube::Error),
+
+    #[error("Finalizer Error: {0}")]
+    // NB: awkward type because finalizer::Error embeds the reconciler error (which is this)
+    // so boxing this error to break cycles
+    FinalizerError(#[source] Box<kube::runtime::finalizer::Error<Error>>),
+
+    #[error("IllegalDocument")]
+    IllegalDocument,
+}
+pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 inventory::collect!(Handler);
 
@@ -18,6 +34,34 @@ inventory::collect!(Handler);
 pub struct Handler {
     pub name: &'static str,
     pub watch_fn: fn(Client) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>,
+}
+
+#[derive(Clone)]
+pub struct Context {
+    pub client: Client,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum EventType {
+    Apply,
+    InitApply,
+    Delete,
+}
+
+impl FromStr for EventType {
+    type Err = std::io::Error;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "Apply" => Ok(Self::Apply),
+            "InitApply" => Ok(Self::InitApply),
+            "Delete" => Ok(Self::Delete),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "no such event type",
+            )),
+        }
+    }
 }
 
 pub struct Operator {
