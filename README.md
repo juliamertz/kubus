@@ -5,22 +5,33 @@ A small Rust library for building Kubernetes operators with less boilerplate.
 ## Example
 
 ```rust
-use k8s_openapi::api::core::v1::Pod;
-use kube::{Client, ResourceExt};
-use kubus::{Result, kubus};
+use std::{sync::Arc, time::Duration};
 
-kubus::main!();
+use k8s_openapi::api::core::v1::Pod;
+use kube::{Client, ResourceExt, runtime::controller::Action};
+use kubus::{Context, HandlerError, Operator, kubus};
+
+struct State {}
+
+#[tokio::main]
+async fn main() -> Result<(), kubus::Error> {
+    let client = Client::try_default().await?;
+    let state = State {};
+
+    Operator::new(client, state)
+        .handler(apply_pod)
+        .run()
+        .await?
+}
 
 #[kubus(event = Apply, finalizer = "kubus.io/cleanup")]
-fn on_pod_apply(_client: Client, pod: Pod) -> Result<()> {
+async fn apply_pod(pod: Arc<Pod>, _ctx: Arc<Context<State>>) -> Result<Action, HandlerError> {
     let name = pod.name_unchecked();
-    let namespace = pod
-        .namespace()
-        .to_owned()
-        .unwrap_or_else(|| "default".into());
+    let namespace = pod.namespace().unwrap();
 
-    println!("pod {name} has been created in {namespace}");
-    Ok(())
+    println!("apply event for pod {name} in {namespace}");
+
+    Ok(Action::requeue(Duration::from_secs(5)))
 }
 ```
 
