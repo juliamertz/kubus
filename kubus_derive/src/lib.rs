@@ -1,5 +1,5 @@
 use proc_macro::TokenStream;
-use quote::quote;
+use quote::{ToTokens, quote};
 use syn::{
     FnArg, Ident, ItemFn, LitStr, PatType, ReturnType, Type, meta::ParseNestedMeta,
     parse_macro_input, parse_quote,
@@ -9,6 +9,8 @@ use syn::{
 struct Attrs {
     event: Option<Ident>,
     finalizer: Option<LitStr>,
+    label_selector: Option<LitStr>,
+    field_selector: Option<LitStr>,
 }
 
 impl Attrs {
@@ -18,6 +20,12 @@ impl Attrs {
             Ok(())
         } else if meta.path.is_ident("finalizer") {
             self.finalizer = Some(meta.value()?.parse()?);
+            Ok(())
+        } else if meta.path.is_ident("label_selector") {
+            self.label_selector = Some(meta.value()?.parse()?);
+            Ok(())
+        } else if meta.path.is_ident("field_selector") {
+            self.field_selector = Some(meta.value()?.parse()?);
             Ok(())
         } else {
             Err(meta.error("unsupported kubus property"))
@@ -87,6 +95,16 @@ fn internal_prefix(ident: Ident) -> Ident {
     Ident::new(&prefixed, ident.span())
 }
 
+fn quote_option<T>(value: Option<T>) -> proc_macro2::TokenStream
+where
+    T: ToTokens,
+{
+    match value {
+        Some(inner) => quote! { Some(#inner) },
+        None => quote! { None },
+    }
+}
+
 #[proc_macro_attribute]
 pub fn kubus(args: TokenStream, input: TokenStream) -> TokenStream {
     let mut attrs = Attrs::default();
@@ -112,10 +130,9 @@ pub fn kubus(args: TokenStream, input: TokenStream) -> TokenStream {
     let struct_name = func.sig.ident.clone();
     let internal_func_name = internal_func.sig.ident.clone();
 
-    let finalizer = attrs
-        .finalizer
-        .map(|name| quote! { Some(#name) })
-        .unwrap_or_else(|| quote! { None });
+    let finalizer = quote_option(attrs.finalizer);
+    let field_selector = quote_option(attrs.field_selector);
+    let label_selector = quote_option(attrs.label_selector);
 
     quote! {
         #[allow(non_snake_case)]
@@ -126,6 +143,9 @@ pub fn kubus(args: TokenStream, input: TokenStream) -> TokenStream {
         pub struct #struct_name;
 
         impl ::kubus::EventHandler<#resource_ty, #context_ty, #error_ty> for #struct_name {
+            const FIELD_SELECTOR: Option<&'static str> = #field_selector;
+            const LABEL_SELECTOR: Option<&'static str> = #label_selector;
+
             fn handler<'async_trait>(
                 resource: ::std::sync::Arc<#resource_ty>,
                 context: ::std::sync::Arc<::kubus::Context<#context_ty>>,

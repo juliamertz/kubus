@@ -9,7 +9,7 @@ use crate::Context;
 use async_trait::async_trait;
 use futures::StreamExt;
 use kube::runtime::controller::{Action, Controller};
-use kube::runtime::watcher::Config as ControllerConfig;
+use kube::runtime::watcher::Config;
 use kube::{Api, Client, Resource};
 use serde::de::DeserializeOwned;
 
@@ -42,6 +42,10 @@ where
     S: Clone + Send + Sync + 'static,
     E: Error + Send + Sync + 'static,
 {
+    const LABEL_SELECTOR: Option<&'static str> = None;
+
+    const FIELD_SELECTOR: Option<&'static str> = None;
+
     /// Handles a resource event
     ///
     /// Called when a resource is created, updated, or needs reconciliation.
@@ -53,7 +57,8 @@ where
     /// Called when `handler` returns an error. Default implementation logs a warning
     /// and requeues after 5 seconds.
     fn error_policy(_resource: Arc<K>, err: &E, _ctx: Arc<Context<S>>) -> Action {
-        tracing::warn!("Reconciliation error: {:?}", err);
+        tracing::error!({ err = err as &dyn Error }, "Handler error");
+
         Action::requeue(Duration::from_secs(5))
     }
 
@@ -64,10 +69,14 @@ where
     where
         Self: Sized + 'static,
     {
-        println!("starting controller");
+        tracing::info!("starting controller");
 
         let api = Api::<K>::all(client);
-        Controller::new(api, ControllerConfig::default())
+        let mut config = Config::default();
+        config.label_selector = Self::LABEL_SELECTOR.map(String::from);
+        config.field_selector = Self::FIELD_SELECTOR.map(String::from);
+
+        Controller::new(api, config)
             .shutdown_on_signal()
             .run(Self::handler, Self::error_policy, context)
             .filter_map(|x| async move { std::result::Result::ok(x) })

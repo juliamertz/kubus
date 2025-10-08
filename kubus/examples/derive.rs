@@ -20,7 +20,11 @@ async fn main() -> Result<(), kubus::Error> {
         .await
 }
 
-#[kubus(event = Apply, finalizer = "kubus.io/cleanup")]
+#[kubus(
+    event = Apply,
+    label_selector = "app.kubernetes.io/managed-by=kubus",
+    finalizer = "kubus.io/cleanup"
+)]
 async fn on_pod_apply(pod: Arc<Pod>, _ctx: Arc<Context<State>>) -> Result<Action, HandlerError> {
     let name = pod.name_unchecked();
     let namespace = pod.namespace().unwrap();
@@ -30,7 +34,11 @@ async fn on_pod_apply(pod: Arc<Pod>, _ctx: Arc<Context<State>>) -> Result<Action
     Ok(Action::requeue(Duration::from_secs(5)))
 }
 
-#[kubus(event = Delete, finalizer = "kubus.io/cleanup")]
+#[kubus(
+    event = Delete,
+    label_selector = "app.kubernetes.io/managed-by=kubus",
+    finalizer = "kubus.io/cleanup"
+)]
 async fn on_pod_delete(pod: Arc<Pod>, _ctx: Arc<Context<State>>) -> Result<Action, HandlerError> {
     let name = pod.name_unchecked();
     let namespace = pod.namespace().unwrap();
