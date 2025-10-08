@@ -5,9 +5,37 @@ use syn::{
     parse_macro_input, parse_quote,
 };
 
+#[derive(PartialEq, Eq)]
+enum EventType {
+    Apply,
+    Delete,
+}
+
+impl TryFrom<String> for EventType {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        match value.as_str() {
+            "Apply" => Ok(EventType::Apply),
+            "Delete" => Ok(EventType::Delete),
+            _ => Err(format!("Invalid event type {value}")),
+        }
+    }
+}
+
+impl ToTokens for EventType {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        let ty: Type = match self {
+            EventType::Apply => parse_quote!(::kubus::EventType::Apply),
+            EventType::Delete => parse_quote!(::kubus::EventType::Delete),
+        };
+        ty.to_tokens(tokens);
+    }
+}
+
 #[derive(Default)]
 struct Attrs {
-    event: Option<Ident>,
+    event: Option<EventType>,
     finalizer: Option<LitStr>,
     label_selector: Option<LitStr>,
     field_selector: Option<LitStr>,
@@ -16,7 +44,12 @@ struct Attrs {
 impl Attrs {
     fn parse(&mut self, meta: ParseNestedMeta) -> syn::parse::Result<()> {
         if meta.path.is_ident("event") {
-            self.event = Some(meta.value()?.parse()?);
+            let str: Ident = meta.value()?.parse()?;
+            self.event = Some(
+                str.to_string()
+                    .try_into()
+                    .map_err(|err| syn::parse::Error::new(str.span(), err))?,
+            );
             Ok(())
         } else if meta.path.is_ident("finalizer") {
             self.finalizer = Some(meta.value()?.parse()?);
@@ -80,15 +113,6 @@ fn extract_function_return_error_type(func: &ItemFn) -> Option<&Type> {
     extract_return_type(func).and_then(|ty| extract_generic_arg(ty, 2))
 }
 
-fn get_event_type(event_name: Ident) -> proc_macro2::TokenStream {
-    match event_name.to_string().as_str() {
-        "Apply" => quote! { ::kubus::EventType::Apply },
-        "InitApply" => quote! { ::kubus::EventType::InitApply },
-        "Delete" => quote! { ::kubus::EventType::Delete },
-        _ => unimplemented!(),
-    }
-}
-
 fn internal_prefix(ident: Ident) -> Ident {
     let value = ident.to_string();
     let prefixed = format!("__kubus_{value}");
@@ -111,12 +135,13 @@ pub fn kubus(args: TokenStream, input: TokenStream) -> TokenStream {
     let attr_parser = syn::meta::parser(|meta| attrs.parse(meta));
     parse_macro_input!(args with attr_parser);
 
+    let event = attrs.event.expect("event kubus attribute missing");
+
     let func = parse_macro_input!(input as ItemFn);
     let resource_ty = extract_resource_type(&func)
         .expect("unable to extract resource type from handler function");
     let context_ty =
         extract_context_type(&func).expect("unable to extract resource type from handler function");
-    let event_type = get_event_type(attrs.event.expect("event kubus attribute missing"));
     let error_ty = extract_function_return_error_type(&func)
         .cloned()
         .unwrap_or_else(|| parse_quote! { ::kubus::HandlerError });
@@ -136,18 +161,17 @@ pub fn kubus(args: TokenStream, input: TokenStream) -> TokenStream {
     let update_finalizer = attrs
         .finalizer
         .map(|finalizer| {
+            let update_func = match event {
+                EventType::Apply => quote! { ::kubus::apply_finalizer },
+                EventType::Delete => quote! { ::kubus::remove_finalizer },
+            };
             quote! {
                 let namespace = resource.namespace();
                 let client = context.client.clone();
                 let api: ::kube::Api<#resource_ty> =
                     <#resource_ty as ::kube::Resource>::Scope::api(client, namespace);
 
-                ::kubus::update_finalizer(
-                    &api,
-                    #finalizer,
-                    #event_type,
-                    resource
-                ).await?;
+                #update_func(&api, #finalizer, resource).await?;
             }
         })
         .unwrap_or_default();
@@ -189,7 +213,7 @@ pub fn kubus(args: TokenStream, input: TokenStream) -> TokenStream {
                         use ::kube::{Resource, ResourceExt};
 
                         if let (::kubus::EventType::Apply, Some(_)) | (::kubus::EventType::Delete, None) =
-                            (#event_type, resource.meta().deletion_timestamp.as_ref())
+                            (#event, resource.meta().deletion_timestamp.as_ref())
                         {
                             return Ok(::kube::runtime::controller::Action::requeue(::std::time::Duration::from_secs(15)));
                         }
