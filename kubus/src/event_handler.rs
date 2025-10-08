@@ -1,4 +1,8 @@
-use std::{fmt::Debug, hash::Hash, sync::Arc, time::Duration};
+use std::error::Error;
+use std::fmt::Debug;
+use std::hash::Hash;
+use std::sync::Arc;
+use std::time::Duration;
 
 use crate::Context;
 
@@ -19,11 +23,11 @@ pub enum EventType {
 }
 
 #[async_trait]
-pub(crate) trait DynEventHandler<Err>: Send + Sync
+pub(crate) trait DynEventHandler<E>: Send + Sync
 where
-    Err: std::error::Error + Send + Sync + 'static,
+    E: Error + Send + Sync + 'static,
 {
-    async fn run(&self, client: Client) -> Result<(), Err>;
+    async fn run(&self, client: Client) -> Result<(), E>;
 }
 
 /// Handler trait for Kubernetes resource events
@@ -31,24 +35,24 @@ where
 /// Implement this trait (typically via the `#[kubus]` derive macro) to define
 /// custom logic for responding to resource changes.
 #[async_trait]
-pub trait EventHandler<K, Ctx, Err = crate::HandlerError>
+pub trait EventHandler<K, S, E = crate::HandlerError>
 where
     K: Resource + Clone + Debug + DeserializeOwned + Send + Sync + 'static,
     K::DynamicType: Clone + Debug + Default + Hash + Unpin + Eq,
-    Ctx: Clone + Send + Sync + 'static,
-    Err: std::error::Error + Send + Sync + 'static,
+    S: Clone + Send + Sync + 'static,
+    E: Error + Send + Sync + 'static,
 {
     /// Handles a resource event
     ///
     /// Called when a resource is created, updated, or needs reconciliation.
     /// Returns an `Action` indicating when to reconcile again.
-    async fn handler(resource: Arc<K>, context: Arc<Context<Ctx>>) -> Result<Action, Err>;
+    async fn handler(resource: Arc<K>, context: Arc<Context<S>>) -> Result<Action, E>;
 
     /// Defines error handling policy for the handler
     ///
     /// Called when `handler` returns an error. Default implementation logs a warning
     /// and requeues after 5 seconds.
-    fn error_policy(_resource: Arc<K>, err: &Err, _ctx: Arc<Context<Ctx>>) -> Action {
+    fn error_policy(_resource: Arc<K>, err: &E, _ctx: Arc<Context<S>>) -> Action {
         tracing::warn!("Reconciliation error: {:?}", err);
         Action::requeue(Duration::from_secs(5))
     }
@@ -56,7 +60,7 @@ where
     /// Starts the controller watching for resource events
     ///
     /// Runs until the process receives a shutdown signal.
-    async fn watch(client: Client, context: Arc<Context<Ctx>>) -> Result<(), Err>
+    async fn watch(client: Client, context: Arc<Context<S>>) -> Result<(), E>
     where
         Self: Sized + 'static,
     {
@@ -74,27 +78,27 @@ where
     }
 }
 
-pub(crate) struct EventHandlerWrapper<H, K, Ctx, Err>
+pub(crate) struct EventHandlerWrapper<H, K, S, E>
 where
-    H: EventHandler<K, Ctx, Err>,
+    H: EventHandler<K, S, E>,
     K: Resource + Clone + DeserializeOwned + Debug + Send + Sync + 'static,
     K::DynamicType: Clone + Debug + Default + Hash + Unpin + Eq,
-    Ctx: Clone + Send + Sync + 'static,
-    Err: std::error::Error + Sync + Send + 'static,
+    S: Clone + Send + Sync + 'static,
+    E: Error + Sync + Send + 'static,
 {
-    context: Arc<Context<Ctx>>,
-    _phantom: std::marker::PhantomData<(H, K, Err)>,
+    context: Arc<Context<S>>,
+    _phantom: std::marker::PhantomData<(H, K, E)>,
 }
 
-impl<H, K, Ctx, Err> EventHandlerWrapper<H, K, Ctx, Err>
+impl<H, K, S, E> EventHandlerWrapper<H, K, S, E>
 where
-    H: EventHandler<K, Ctx, Err>,
+    H: EventHandler<K, S, E>,
     K: Resource + Clone + DeserializeOwned + Debug + Send + Sync + 'static,
     K::DynamicType: Clone + Debug + Default + Hash + Unpin + Eq,
-    Ctx: Clone + Send + Sync + 'static,
-    Err: std::error::Error + Sync + Send + 'static,
+    S: Clone + Send + Sync + 'static,
+    E: Error + Sync + Send + 'static,
 {
-    pub(crate) const fn new(context: Arc<Context<Ctx>>) -> Self {
+    pub(crate) const fn new(context: Arc<Context<S>>) -> Self {
         Self {
             context,
             _phantom: std::marker::PhantomData,
@@ -103,15 +107,15 @@ where
 }
 
 #[async_trait]
-impl<H, K, Ctx, Err> DynEventHandler<Err> for EventHandlerWrapper<H, K, Ctx, Err>
+impl<H, K, S, E> DynEventHandler<E> for EventHandlerWrapper<H, K, S, E>
 where
-    H: EventHandler<K, Ctx, Err> + Send + Sync + 'static,
+    H: EventHandler<K, S, E> + Send + Sync + 'static,
     K: Resource + Clone + DeserializeOwned + Debug + Send + Sync + 'static,
     K::DynamicType: Clone + Debug + Default + Hash + Unpin + Eq,
-    Ctx: Clone + Send + Sync + 'static,
-    Err: std::error::Error + Sync + Send + 'static,
+    S: Clone + Send + Sync + 'static,
+    E: Error + Sync + Send + 'static,
 {
-    async fn run(&self, client: Client) -> Result<(), Err> {
+    async fn run(&self, client: Client) -> Result<(), E> {
         let context = self.context.clone();
         H::watch(client, context).await
     }

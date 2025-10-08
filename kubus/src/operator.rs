@@ -1,3 +1,4 @@
+use std::error::Error;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::Arc;
@@ -12,21 +13,21 @@ use crate::{Context, Result};
 /// Kubernetes operator managing multiple resource handlers
 ///
 /// Use with the `#[kubus]` derive macro to register handlers for different resource types.
-pub struct Operator<Ctx, Err>
+pub struct Operator<S, E>
 where
-    Ctx: Clone,
+    S: Clone,
 {
-    context: Arc<Context<Ctx>>,
-    handlers: Vec<Box<dyn DynEventHandler<Err>>>,
+    context: Arc<Context<S>>,
+    handlers: Vec<Box<dyn DynEventHandler<E>>>,
 }
 
-impl<Ctx, Err> Operator<Ctx, Err>
+impl<S, E> Operator<S, E>
 where
-    Ctx: Clone + Send + Sync + 'static,
-    Err: std::error::Error + Send + Sync + 'static,
+    S: Clone + Send + Sync + 'static,
+    E: Error + Send + Sync + 'static,
 {
     /// Creates a new operator
-    pub fn new(context: Arc<Context<Ctx>>) -> Self {
+    pub fn new(context: Arc<Context<S>>) -> Self {
         Self {
             context,
             handlers: Default::default(),
@@ -39,11 +40,11 @@ where
     #[must_use]
     pub fn handler<H, K>(mut self, _: H) -> Self
     where
-        H: EventHandler<K, Ctx, Err> + Send + Sync + 'static,
+        H: EventHandler<K, S, E> + Send + Sync + 'static,
         K: Resource + Clone + DeserializeOwned + Debug + Send + Sync + 'static,
         K::DynamicType: Clone + Debug + Default + Hash + Unpin + Eq,
     {
-        let wrapper = EventHandlerWrapper::<H, K, Ctx, Err>::new(self.context.clone());
+        let wrapper = EventHandlerWrapper::<H, K, S, E>::new(self.context.clone());
         self.handlers.push(Box::new(wrapper));
         self
     }
@@ -81,12 +82,9 @@ pub struct OperatorBuilder;
 
 impl OperatorBuilder {
     /// Attach context to operator builder
-    pub fn with_context<Ctx>(
-        self,
-        context: impl Into<Context<Ctx>>,
-    ) -> OperatorBuilderWithContext<Ctx>
+    pub fn with_context<S>(self, context: impl Into<Context<S>>) -> OperatorBuilderWithContext<S>
     where
-        Ctx: Clone + Send + Sync + 'static,
+        S: Clone + Send + Sync + 'static,
     {
         let context = Arc::new(context.into());
         OperatorBuilderWithContext { context }
@@ -101,30 +99,30 @@ impl Operator<(), ()> {
     }
 }
 
-pub struct OperatorBuilderWithContext<Ctx>
+pub struct OperatorBuilderWithContext<S>
 where
-    Ctx: Clone + Send + Sync + 'static,
+    S: Clone + Send + Sync + 'static,
 {
-    context: Arc<Context<Ctx>>,
+    context: Arc<Context<S>>,
 }
 
-impl<Ctx> OperatorBuilderWithContext<Ctx>
+impl<S> OperatorBuilderWithContext<S>
 where
-    Ctx: Clone + Send + Sync + 'static,
+    S: Clone + Send + Sync + 'static,
 {
     /// Registers an event handler for a resource type
     ///
     /// Chain multiple calls to register handlers for different resources.
     #[must_use]
-    pub fn handler<H, K, Err>(self, _: H) -> Operator<Ctx, Err>
+    pub fn handler<H, K, E>(self, _: H) -> Operator<S, E>
     where
-        H: EventHandler<K, Ctx, Err> + Send + Sync + 'static,
-        Err: std::error::Error + Send + Sync + 'static,
+        H: EventHandler<K, S, E> + Send + Sync + 'static,
+        E: Error + Send + Sync + 'static,
         K: Resource + Clone + DeserializeOwned + Debug + Send + Sync + 'static,
         K::DynamicType: Clone + Debug + Default + Hash + Unpin + Eq,
     {
-        let wrapper = EventHandlerWrapper::<H, K, Ctx, Err>::new(self.context.clone());
-        let mut operator = Operator::<Ctx, Err>::new(self.context);
+        let wrapper = EventHandlerWrapper::<H, K, S, E>::new(self.context.clone());
+        let mut operator = Operator::<S, E>::new(self.context);
         operator.handlers.push(Box::new(wrapper));
         operator
     }
