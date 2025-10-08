@@ -234,6 +234,51 @@ where
     }
 }
 
+#[async_trait]
+pub trait ApiExt<K>
+where
+    K: Resource,
+{
+    async fn apply(self, client: &Client) -> kube::Result<K>;
+    async fn apply_with_api(self, api: Api<K>) -> kube::Result<K>;
+    async fn apply_if_not_exists(self, client: &Client) -> kube::Result<()>;
+}
+
+#[async_trait]
+impl<K, S> ApiExt<K> for K
+where
+    S: ScopeExt<K>,
+    K: Resource<Scope = S> + Clone + Serialize + DeserializeOwned + Debug + Send + Sync + 'static,
+    K::DynamicType: Clone + Debug + Default + Hash + Unpin + Eq,
+{
+    async fn apply(self, client: &Client) -> kube::Result<K> {
+        let api = K::Scope::api(client.clone(), self.namespace());
+        self.apply_with_api(api).await
+    }
+
+    async fn apply_with_api(self, api: Api<K>) -> kube::Result<K> {
+        api.patch(
+            &self.name_unchecked(),
+            &PatchParams::apply(env!("CARGO_PKG_NAME")),
+            &Patch::Apply(self),
+        )
+        .await
+    }
+
+    async fn apply_if_not_exists(self, client: &Client) -> kube::Result<()> {
+        let api = K::Scope::api(client.clone(), self.namespace());
+        let name = self.name_unchecked();
+
+        if let Err(kube::Error::Api(kube::core::ErrorResponse { code: 404, .. })) =
+            api.get(&name).await
+        {
+            self.apply_with_api(api).await?;
+        }
+
+        Ok(())
+    }
+}
+
 /// Kubernetes operator managing multiple resource handlers
 ///
 /// Use with the `#[kubus]` derive macro to register handlers for different resource types.
