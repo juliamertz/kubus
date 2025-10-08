@@ -130,9 +130,27 @@ pub fn kubus(args: TokenStream, input: TokenStream) -> TokenStream {
     let struct_name = func.sig.ident.clone();
     let internal_func_name = internal_func.sig.ident.clone();
 
-    let finalizer = quote_option(attrs.finalizer);
     let field_selector = quote_option(attrs.field_selector);
     let label_selector = quote_option(attrs.label_selector);
+
+    let update_finalizer = attrs
+        .finalizer
+        .map(|finalizer| {
+            quote! {
+                let namespace = resource.namespace();
+                let client = context.client.clone();
+                let api: ::kube::Api<#resource_ty> =
+                    <#resource_ty as ::kube::Resource>::Scope::api(client, namespace);
+
+                ::kubus::update_finalizer(
+                    &api,
+                    #finalizer,
+                    #event_type,
+                    resource
+                ).await?;
+            }
+        })
+        .unwrap_or_default();
 
     quote! {
         #[allow(non_snake_case)]
@@ -173,26 +191,14 @@ pub fn kubus(args: TokenStream, input: TokenStream) -> TokenStream {
                         if let (::kubus::EventType::Apply, Some(_)) | (::kubus::EventType::Delete, None) =
                             (#event_type, resource.meta().deletion_timestamp.as_ref())
                         {
-                            return Ok(::kube::runtime::controller::Action::requeue(Duration::from_secs(15)));
+                            return Ok(::kube::runtime::controller::Action::requeue(::std::time::Duration::from_secs(15)));
                         }
 
                         #internal_func_name(resource.clone(), context.clone())
                             .await
                             .map_err(|err| ::kubus::Error::Handler(Box::new(err)))?;
 
-                        if let Some(finalizer) = #finalizer {
-                            let namespace = resource.namespace();
-                            let client = context.client.clone();
-                            let api: ::kube::Api<#resource_ty> =
-                                <#resource_ty as ::kube::Resource>::Scope::api(client, namespace);
-
-                            ::kubus::update_finalizer(
-                                &api,
-                                &finalizer,
-                                #event_type,
-                                resource
-                            ).await?;
-                        }
+                        #update_finalizer
 
                         Ok(::kube::runtime::controller::Action::requeue(::std::time::Duration::from_secs(15)))
                     };
