@@ -1,7 +1,129 @@
 //! Kubernetes operator framework for Rust
 //!
-//! Provides abstractions for building Kubernetes operators using the `#[kubus]` derive macro
-//! to implement event handlers for custom resources.
+//! Kubus provides a `#[kubus]` macro for building Kubernetes operators with minimal boilerplate.
+//! It wraps [kube-rs](https://kube.rs) controllers with an ergonomic function-based API.
+//!
+//! # Examples
+//!
+//! ## Basic operator
+//!
+//! ```rust,no_run
+//! use std::{sync::Arc, time::Duration};
+//! use k8s_openapi::api::core::v1::Pod;
+//! use kube::{Client, ResourceExt};
+//! use kubus::{Context, HandlerError, Operator, kubus};
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), kubus::Error> {
+//!     let client = Client::try_default().await?;
+//!
+//!     Operator::builder()
+//!         .with_context(client)
+//!         .handler(on_pod)
+//!         .run()
+//!         .await
+//! }
+//!
+//! #[kubus(event = Apply)]
+//! async fn on_pod(pod: Arc<Pod>, _ctx: Arc<Context>) -> Result<(), HandlerError> {
+//!     println!("Pod {} in namespace {}",
+//!         pod.name_unchecked(),
+//!         pod.namespace().unwrap()
+//!     );
+//!     Ok(())
+//! }
+//! ```
+//!
+//! ## Multiple handlers with label selectors
+//!
+//! ```rust,no_run
+//! use std::{sync::Arc, time::Duration};
+//! use k8s_openapi::api::core::v1::Pod;
+//! use kube::{Client, ResourceExt};
+//! use kubus::{Context, HandlerError, Operator, kubus};
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), kubus::Error> {
+//!     let client = Client::try_default().await?;
+//!
+//!     Operator::builder()
+//!         .with_context(client)
+//!         .handler(on_pod_apply)
+//!         .handler(on_pod_delete)
+//!         .run()
+//!         .await
+//! }
+//!
+//! #[kubus(
+//!     event = Apply,
+//!     label_selector = "app.kubernetes.io/managed-by=kubus"
+//! )]
+//! async fn on_pod_apply(pod: Arc<Pod>, _ctx: Arc<Context>) -> Result<(), HandlerError> {
+//!     println!("Apply: {}", pod.name_unchecked());
+//!     Ok(())
+//! }
+//!
+//! #[kubus(
+//!     event = Delete,
+//!     label_selector = "app.kubernetes.io/managed-by=kubus"
+//! )]
+//! async fn on_pod_delete(pod: Arc<Pod>, _ctx: Arc<Context>) -> Result<(), HandlerError> {
+//!     println!("Delete: {}", pod.name_unchecked());
+//!     Ok(())
+//! }
+//! ```
+//!
+//! ## Custom state and finalizers
+//!
+//! ```rust,no_run
+//! use std::{sync::Arc, time::Duration};
+//! use k8s_openapi::api::core::v1::ConfigMap;
+//! use kube::{Client, ResourceExt};
+//! use kubus::{Context, HandlerError, Operator, kubus};
+//!
+//! #[derive(Debug, Clone)]
+//! struct State {
+//!     db_pool: String,
+//! }
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), kubus::Error> {
+//!     let client = Client::try_default().await?;
+//!     let state = State { db_pool: "connection_string".to_string() };
+//!
+//!     Operator::builder()
+//!         .with_context((client, state))
+//!         .handler(on_configmap_apply)
+//!         .handler(on_configmap_delete)
+//!         .run()
+//!         .await
+//! }
+//!
+//! #[kubus(event = Apply, finalizer = "kubus.io/cleanup")]
+//! async fn on_configmap_apply(
+//!     cm: Arc<ConfigMap>,
+//!     ctx: Arc<Context<State>>
+//! ) -> Result<(), HandlerError> {
+//!     println!("ConfigMap {} - db: {}", cm.name_unchecked(), ctx.data.db_pool);
+//!     Ok(())
+//! }
+//!
+//! #[kubus(event = Delete, finalizer = "kubus.io/cleanup")]
+//! async fn on_configmap_delete(
+//!     cm: Arc<ConfigMap>,
+//!     _ctx: Arc<Context<State>>
+//! ) -> Result<(), HandlerError> {
+//!     println!("Cleanup for {}", cm.name_unchecked());
+//!     Ok(())
+//! }
+//! ```
+//!
+//! # Macro attributes
+//!
+//! - `event`: `Apply` or `Delete` - required
+//! - `finalizer`: Finalizer name for cleanup on deletion
+//! - `label_selector`: Filter resources by labels
+//! - `field_selector`: Filter resources by fields
 
 use std::error::Error as StdError;
 use std::fmt::Debug;

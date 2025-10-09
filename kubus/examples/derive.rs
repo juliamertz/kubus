@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use k8s_openapi::api::core::v1::Pod;
-use kube::{Client, ResourceExt, runtime::controller::Action};
+use kube::{runtime::controller::Action, Client, Resource, ResourceExt};
 use kubus::{Context, HandlerError, Operator, kubus};
 
 #[derive(Debug, Clone)]
