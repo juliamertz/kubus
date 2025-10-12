@@ -180,6 +180,8 @@ pub fn kubus(args: TokenStream, input: TokenStream) -> TokenStream {
         })
         .unwrap_or_default();
 
+    let handler_name = LitStr::new(&struct_name.to_string(), struct_name.span());
+
     quote! {
         #[allow(non_snake_case)]
         #internal_func
@@ -189,7 +191,10 @@ pub fn kubus(args: TokenStream, input: TokenStream) -> TokenStream {
         pub struct #struct_name;
 
         impl ::kubus::EventHandler<#resource_ty, #context_ty, #error_ty> for #struct_name {
+            const NAME: &'static str = #handler_name;
+
             const FIELD_SELECTOR: Option<&'static str> = #field_selector;
+
             const LABEL_SELECTOR: Option<&'static str> = #label_selector;
 
             fn handler<'async_trait>(

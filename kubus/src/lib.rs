@@ -144,6 +144,8 @@ use serde_json::json;
 use thiserror::Error;
 
 pub use kubus_derive::*;
+use tokio::task::JoinSet;
+use tracing::info_span;
 
 /// Errors that can occur during operator execution
 #[derive(Error, Debug)]
@@ -209,14 +211,6 @@ pub enum EventType {
     Delete,
 }
 
-#[async_trait]
-trait DynEventHandler<E>: Send + Sync
-where
-    E: StdError + Send + Sync + 'static,
-{
-    async fn run(&self, client: Client) -> Result<(), E>;
-}
-
 /// Handler trait for Kubernetes resource events
 ///
 /// Implement this trait (typically via the `#[kubus]` derive macro) to define
@@ -229,6 +223,8 @@ where
     S: Clone + Send + Sync + 'static,
     E: StdError + Send + Sync + 'static,
 {
+    const NAME: &'static str;
+
     const LABEL_SELECTOR: Option<&'static str> = None;
 
     const FIELD_SELECTOR: Option<&'static str> = None;
@@ -303,6 +299,16 @@ where
 }
 
 #[async_trait]
+trait DynEventHandler<E>: Send + Sync
+where
+    E: StdError + Send + Sync + 'static,
+{
+    fn name(&self) -> &'static str;
+
+    async fn run(&self, client: Client) -> Result<(), E>;
+}
+
+#[async_trait]
 impl<H, K, S, E> DynEventHandler<E> for EventHandlerWrapper<H, K, S, E>
 where
     H: EventHandler<K, S, E> + Send + Sync + 'static,
@@ -311,6 +317,10 @@ where
     S: Clone + Send + Sync + 'static,
     E: StdError + Sync + Send + 'static,
 {
+    fn name(&self) -> &'static str {
+        H::NAME
+    }
+
     async fn run(&self, client: Client) -> Result<(), E> {
         let context = self.context.clone();
         H::watch(client, context).await
@@ -473,22 +483,23 @@ where
             self.handlers.len()
         );
 
-        let tasks: Vec<_> = self
-            .handlers
-            .into_iter()
-            .map(|handler| {
-                let client = self.context.client.clone();
-                tokio::spawn(async move {
-                    tracing::info!("starting handler");
-                    let client = client.clone();
-                    if let Err(e) = handler.run(client).await {
-                        tracing::error!("restarting handler failed: {}", e);
-                    }
-                })
-            })
-            .collect();
+        let mut set = JoinSet::new();
 
-        future::join_all(tasks).await;
+        for handler in self.handlers {
+            let client = self.context.client.clone();
+            set.spawn(async move {
+                let span = info_span!("handler", name = handler.name());
+                let _guard = span.enter();
+
+                let client = client.clone();
+                if let Err(err) = handler.run(client).await {
+                    tracing::error!({ err = &err as &dyn StdError }, "handler error");
+                }
+            });
+        }
+
+        set.join_all().await;
+
         Ok(())
     }
 }
