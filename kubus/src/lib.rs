@@ -134,7 +134,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use futures::{StreamExt, future};
 use k8s_openapi::{ClusterResourceScope, NamespaceResourceScope};
-use kube::api::{Api, Patch, PatchParams};
+use kube::api::{Api, DeleteParams, Patch, PatchParams};
 use kube::runtime::controller::{Action, Controller};
 use kube::runtime::watcher::Config;
 use kube::{Client, Resource, ResourceExt};
@@ -364,6 +364,7 @@ where
     async fn apply(self, client: &Client) -> kube::Result<K>;
     async fn apply_with_api(self, api: Api<K>) -> kube::Result<K>;
     async fn apply_if_not_exists(self, client: &Client) -> kube::Result<()>;
+    async fn delete(self, client: &Client) -> kube::Result<()>;
 }
 
 #[async_trait]
@@ -397,6 +398,14 @@ where
             self.apply_with_api(api).await?;
         }
 
+        Ok(())
+    }
+
+    async fn delete(self, client: &Client) -> kube::Result<()> {
+        let api = K::Scope::api(client.clone(), self.namespace());
+        let name = self.name_unchecked();
+        let params = DeleteParams::default();
+        api.delete(&name, &params).await?;
         Ok(())
     }
 }
