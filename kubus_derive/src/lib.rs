@@ -1,9 +1,8 @@
 use proc_macro::TokenStream;
 use quote::{ToTokens, quote};
-use syn::{
-    FnArg, Ident, ItemFn, LitStr, PatType, ReturnType, Type, meta::ParseNestedMeta,
-    parse_macro_input, parse_quote,
-};
+use syn::meta::ParseNestedMeta;
+use syn::{FnArg, Ident, ItemFn, LitInt, LitStr, PatType, ReturnType, Type};
+use syn::{parse_macro_input, parse_quote};
 
 #[derive(PartialEq, Eq)]
 enum EventType {
@@ -39,6 +38,7 @@ struct Attrs {
     finalizer: Option<LitStr>,
     label_selector: Option<LitStr>,
     field_selector: Option<LitStr>,
+    requeue_interval: Option<LitInt>,
 }
 
 impl Attrs {
@@ -59,6 +59,9 @@ impl Attrs {
             Ok(())
         } else if meta.path.is_ident("field_selector") {
             self.field_selector = Some(meta.value()?.parse()?);
+            Ok(())
+        } else if meta.path.is_ident("requeue_interval") {
+            self.requeue_interval = Some(meta.value()?.parse()?);
             Ok(())
         } else {
             Err(meta.error("unsupported kubus property"))
@@ -157,6 +160,7 @@ pub fn kubus(args: TokenStream, input: TokenStream) -> TokenStream {
 
     let field_selector = quote_option(attrs.field_selector);
     let label_selector = quote_option(attrs.label_selector);
+    let requeue_interval = attrs.requeue_interval.unwrap_or_else(|| parse_quote!(30));
 
     let update_finalizer = attrs
         .finalizer
@@ -211,11 +215,14 @@ pub fn kubus(args: TokenStream, input: TokenStream) -> TokenStream {
                     let __ret: ::std::result::Result<::kube::runtime::controller::Action, #error_ty> = {
                         use ::kubus::ScopeExt;
                         use ::kube::{Resource, ResourceExt};
+                        let requeue = ::kube::runtime::controller::Action::requeue(
+                            ::std::time::Duration::from_secs(#requeue_interval)
+                        );
 
                         if let (::kubus::EventType::Apply, Some(_)) | (::kubus::EventType::Delete, None) =
                             (#event, resource.meta().deletion_timestamp.as_ref())
                         {
-                            return Ok(::kube::runtime::controller::Action::requeue(::std::time::Duration::from_secs(15)));
+                            return Ok(requeue);
                         }
 
                         #internal_func_name(resource.clone(), context.clone())
@@ -224,7 +231,7 @@ pub fn kubus(args: TokenStream, input: TokenStream) -> TokenStream {
 
                         #update_finalizer
 
-                        Ok(::kube::runtime::controller::Action::requeue(::std::time::Duration::from_secs(15)))
+                        Ok(requeue)
                     };
                     #[allow(unreachable_code)]
                     __ret
