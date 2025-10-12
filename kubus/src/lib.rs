@@ -132,7 +132,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use futures::{StreamExt, future};
+use futures::StreamExt;
 use k8s_openapi::{ClusterResourceScope, NamespaceResourceScope};
 use kube::api::{Api, DeleteParams, Patch, PatchParams};
 use kube::runtime::controller::{Action, Controller};
@@ -611,4 +611,22 @@ where
     ]);
 
     patch_object(api, obj, patch).await
+}
+
+/// Print list of CRD's to stdout as serialized yaml
+///
+/// ```rust,no_run
+/// print_crds![Database, Backup];
+/// ```
+#[macro_export]
+macro_rules! print_crds {
+    [$($resource:ident),+] => {{
+            let list = ::k8s_openapi::List {
+                items: vec![$($resource::crd(),)+],
+                ..::core::default::Default::default()
+            };
+            let yaml = ::serde_yaml::to_string(&list).unwrap();
+            let mut stdout = ::std::io::stdout();
+            stdout.write_all(yaml.as_bytes())?;
+    }};
 }
