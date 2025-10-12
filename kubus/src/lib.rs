@@ -571,7 +571,7 @@ where
     } else {
         json!([
             { "op": "test", "path": "/metadata/finalizers", "value": obj.finalizers() },
-            { "op": "add", "path": "/metadata/finalizers", "value": name }
+            { "op": "add", "path": "/metadata/finalizers", "value": [name] }
         ])
     };
 
