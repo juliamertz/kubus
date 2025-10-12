@@ -365,6 +365,7 @@ where
     async fn apply_with_api(self, api: Api<K>) -> kube::Result<K>;
     async fn apply_if_not_exists(self, client: &Client) -> kube::Result<()>;
     async fn delete(self, client: &Client) -> kube::Result<()>;
+    async fn exists(self, client: &Client) -> kube::Result<bool>;
 }
 
 #[async_trait]
@@ -407,6 +408,20 @@ where
         let params = DeleteParams::default();
         api.delete(&name, &params).await?;
         Ok(())
+    }
+
+    async fn exists(self, client: &Client) -> kube::Result<bool> {
+        let name = self.name_unchecked();
+        let api = K::Scope::api(client.clone(), self.namespace());
+
+        match api.get(&name).await {
+            Ok(_) => Ok(true),
+            Err(kube::Error::Api(kube::core::ErrorResponse { code: 404, .. })) => Ok(false),
+            err => {
+                err?;
+                Ok(false)
+            }
+        }
     }
 }
 
