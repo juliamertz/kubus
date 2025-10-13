@@ -41,3 +41,8 @@ The `#[kubus]` attribute handles the watcher setup, reconciliation loop, and fin
 ## Status
 
 Experimental - the API will probably change as I figure out what works.
+
+## Thanks to
+
+- [kopf](https://github.com/nolar/kopf) For the inspiration
+- [kube-rs](https://github.com/kube-rs/kube) For the amazing library
