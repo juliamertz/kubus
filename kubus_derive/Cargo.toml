@@ -1,7 +1,7 @@
 [package]
 name = "kubus_derive"
 description = "Derive based kubernetes operator framework"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2024"
 homepage = "https://github.com/juliamertz/kubus"
 repository = "https://github.com/juliamertz/kubus"
