@@ -132,6 +132,64 @@ where
     }
 }
 
+/// A procedural macro for defining Kubernetes event handlers in the Kubus framework.
+///
+/// # Attributes
+///
+/// * `event` (required) - The event type to handle: `Apply` or `Delete`
+/// * `finalizer` (optional) - The finalizer name to add (for Apply) or remove (for Delete)
+/// * `label_selector` (optional) - Label selector to filter which resources trigger this handler
+/// * `field_selector` (optional) - Field selector to filter which resources trigger this handler
+/// * `requeue_interval` (optional) - Requeue interval in seconds (default: 30)
+///
+/// # Function Signature
+///
+/// The annotated function must have the following signature:
+/// ```ignore
+/// async fn handler_name(
+///     resource: Arc<ResourceType>,
+///     context: Arc<Context<ContextType>>,
+/// ) -> Result<(), ErrorType>
+/// ```
+///
+/// # Examples
+///
+/// ```ignore
+/// #[kubus(event = Apply, finalizer = "my-app.example.com/cleanup")]
+/// async fn handle_pod_create(
+///     pod: Arc<Pod>,
+///     ctx: Arc<Context<MyContext>>,
+/// ) -> Result<(), MyError> {
+///     // Handle pod creation
+///     Ok(())
+/// }
+///
+/// #[kubus(
+///     event = Delete,
+///     finalizer = "my-app.example.com/cleanup",
+///     requeue_interval = 60
+/// )]
+/// async fn handle_pod_delete(
+///     pod: Arc<Pod>,
+///     ctx: Arc<Context<MyContext>>,
+/// ) -> Result<(), MyError> {
+///     // Handle pod deletion
+///     Ok(())
+/// }
+///
+/// #[kubus(
+///     event = Apply,
+///     label_selector = "app=my-app",
+///     field_selector = "status.phase=Running"
+/// )]
+/// async fn handle_running_pods(
+///     pod: Arc<Pod>,
+///     ctx: Arc<Context<MyContext>>,
+/// ) -> Result<(), MyError> {
+///     // Only handle running pods with app=my-app label
+///     Ok(())
+/// }
+/// ```
 #[proc_macro_attribute]
 pub fn kubus(args: TokenStream, input: TokenStream) -> TokenStream {
     let mut attrs = Attrs::default();

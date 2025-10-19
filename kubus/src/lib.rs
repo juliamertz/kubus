@@ -117,14 +117,6 @@
 //!     Ok(())
 //! }
 //! ```
-//!
-//! # Macro attributes
-//!
-//! - `event`: `Apply` or `Delete` - required
-//! - `finalizer`: Finalizer name for cleanup on deletion
-//! - `label_selector`: Filter resources by labels
-//! - `field_selector`: Filter resources by fields
-//! - `requeue_interval`: Duration in seconds between reconcilation (default 30s)
 
 /// Errors that can occur during operator execution
 #[derive(thiserror::Error, Debug)]
