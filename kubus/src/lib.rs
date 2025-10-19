@@ -145,7 +145,7 @@ use thiserror::Error;
 
 pub use kubus_derive::*;
 use tokio::task::JoinSet;
-use tracing::info_span;
+use tracing::{Instrument, info_span};
 
 /// Errors that can occur during operator execution
 #[derive(Error, Debug)]
@@ -487,15 +487,16 @@ where
 
         for handler in self.handlers {
             let client = self.context.client.clone();
-            set.spawn(async move {
-                let span = info_span!("handler", name = handler.name());
-                let _guard = span.enter();
-
-                let client = client.clone();
-                if let Err(err) = handler.run(client).await {
-                    tracing::error!({ err = &err as &dyn StdError }, "handler error");
+            let name = handler.name();
+            set.spawn(
+                async move {
+                    let client = client.clone();
+                    if let Err(err) = handler.run(client).await {
+                        tracing::error!({ err = &err as &dyn StdError }, "handler error");
+                    }
                 }
-            });
+                .instrument(info_span!("handler", name = name)),
+            );
         }
 
         set.join_all().await;
