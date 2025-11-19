@@ -1,3 +1,8 @@
+//! Basic operator example demonstrating event handlers
+//!
+//! This example shows how to create a simple operator that watches for Pod events
+//! and handles Apply and Delete events with label selectors and finalizers.
+
 use std::sync::Arc;
 
 use k8s_openapi::api::core::v1::Pod;
@@ -9,6 +14,8 @@ struct State {}
 
 #[tokio::main]
 async fn main() -> Result<(), kubus::Error> {
+    tracing_subscriber::fmt().init();
+
     let client = Client::try_default().await?;
     let state = State {};
 

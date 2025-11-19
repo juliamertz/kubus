@@ -32,43 +32,6 @@ impl ToTokens for EventType {
     }
 }
 
-#[derive(Default)]
-struct Attrs {
-    event: Option<EventType>,
-    finalizer: Option<LitStr>,
-    label_selector: Option<LitStr>,
-    field_selector: Option<LitStr>,
-    requeue_interval: Option<LitInt>,
-}
-
-impl Attrs {
-    fn parse(&mut self, meta: ParseNestedMeta) -> syn::parse::Result<()> {
-        if meta.path.is_ident("event") {
-            let str: Ident = meta.value()?.parse()?;
-            self.event = Some(
-                str.to_string()
-                    .try_into()
-                    .map_err(|err| syn::parse::Error::new(str.span(), err))?,
-            );
-            Ok(())
-        } else if meta.path.is_ident("finalizer") {
-            self.finalizer = Some(meta.value()?.parse()?);
-            Ok(())
-        } else if meta.path.is_ident("label_selector") {
-            self.label_selector = Some(meta.value()?.parse()?);
-            Ok(())
-        } else if meta.path.is_ident("field_selector") {
-            self.field_selector = Some(meta.value()?.parse()?);
-            Ok(())
-        } else if meta.path.is_ident("requeue_interval") {
-            self.requeue_interval = Some(meta.value()?.parse()?);
-            Ok(())
-        } else {
-            Err(meta.error("unsupported kubus property"))
-        }
-    }
-}
-
 fn extract_generic_arg(ty: &Type, pos: usize) -> Option<&Type> {
     if let syn::Type::Path(type_path) = ty
         && let Some(last_segment) = type_path.path.segments.get(pos)
@@ -132,6 +95,43 @@ where
     }
 }
 
+#[derive(Default)]
+struct EventHandlerAttrs {
+    event: Option<EventType>,
+    finalizer: Option<LitStr>,
+    label_selector: Option<LitStr>,
+    field_selector: Option<LitStr>,
+    requeue_interval: Option<LitInt>,
+}
+
+impl EventHandlerAttrs {
+    fn parse(&mut self, meta: ParseNestedMeta) -> syn::parse::Result<()> {
+        if meta.path.is_ident("event") {
+            let str: Ident = meta.value()?.parse()?;
+            self.event = Some(
+                str.to_string()
+                    .try_into()
+                    .map_err(|err| syn::parse::Error::new(str.span(), err))?,
+            );
+            Ok(())
+        } else if meta.path.is_ident("finalizer") {
+            self.finalizer = Some(meta.value()?.parse()?);
+            Ok(())
+        } else if meta.path.is_ident("label_selector") {
+            self.label_selector = Some(meta.value()?.parse()?);
+            Ok(())
+        } else if meta.path.is_ident("field_selector") {
+            self.field_selector = Some(meta.value()?.parse()?);
+            Ok(())
+        } else if meta.path.is_ident("requeue_interval") {
+            self.requeue_interval = Some(meta.value()?.parse()?);
+            Ok(())
+        } else {
+            Err(meta.error("unsupported kubus property"))
+        }
+    }
+}
+
 /// A procedural macro for defining Kubernetes event handlers in the Kubus framework.
 ///
 /// # Attributes
@@ -192,7 +192,7 @@ where
 /// ```
 #[proc_macro_attribute]
 pub fn kubus(args: TokenStream, input: TokenStream) -> TokenStream {
-    let mut attrs = Attrs::default();
+    let mut attrs = EventHandlerAttrs::default();
     let attr_parser = syn::meta::parser(|meta| attrs.parse(meta));
     parse_macro_input!(args with attr_parser);
 
@@ -248,57 +248,35 @@ pub fn kubus(args: TokenStream, input: TokenStream) -> TokenStream {
         #[doc(hidden)]
         pub struct #struct_name;
 
+        #[::async_trait::async_trait]
         impl ::kubus::Handler<#resource_ty, #context_ty, #error_ty> for #struct_name {
             const NAME: &'static str = #handler_name;
-
             const FIELD_SELECTOR: Option<&'static str> = #field_selector;
-
             const LABEL_SELECTOR: Option<&'static str> = #label_selector;
 
-            fn handle<'async_trait>(
+            async fn handle(
                 resource: ::std::sync::Arc<#resource_ty>,
                 context: ::std::sync::Arc<::kubus::Context<#context_ty>>,
-            ) -> ::core::pin::Pin<
-                Box<
-                    dyn ::core::future::Future<Output = ::std::result::Result<::kube::runtime::controller::Action, #error_ty>>
-                        + ::core::marker::Send
-                        + 'async_trait,
-                >,
-            > {
-                Box::pin(async move {
-                    if let ::core::option::Option::Some(__ret) =
-                        ::core::option::Option::None::<::std::result::Result<::kube::runtime::controller::Action, #error_ty>>
-                    {
-                        #[allow(unreachable_code)]
-                        return __ret;
-                    }
-                    let resource = resource;
-                    let context = context;
+            ) -> ::std::result::Result<::kube::runtime::controller::Action, #error_ty> {
+                use ::kubus::ScopeExt;
+                use ::kube::{Resource, ResourceExt};
+                let requeue = ::kube::runtime::controller::Action::requeue(
+                    ::std::time::Duration::from_secs(#requeue_interval)
+                );
 
-                    let __ret: ::std::result::Result<::kube::runtime::controller::Action, #error_ty> = {
-                        use ::kubus::ScopeExt;
-                        use ::kube::{Resource, ResourceExt};
-                        let requeue = ::kube::runtime::controller::Action::requeue(
-                            ::std::time::Duration::from_secs(#requeue_interval)
-                        );
+                if let (::kubus::EventType::Apply, Some(_)) | (::kubus::EventType::Delete, None) =
+                    (#event, resource.meta().deletion_timestamp.as_ref())
+                {
+                    return Ok(requeue);
+                }
 
-                        if let (::kubus::EventType::Apply, Some(_)) | (::kubus::EventType::Delete, None) =
-                            (#event, resource.meta().deletion_timestamp.as_ref())
-                        {
-                            return Ok(requeue);
-                        }
+                #internal_func_name(resource.clone(), context.clone())
+                    .await
+                    .map_err(|err| ::kubus::Error::Handler(Box::new(err)))?;
 
-                        #internal_func_name(resource.clone(), context.clone())
-                            .await
-                            .map_err(|err| ::kubus::Error::Handler(Box::new(err)))?;
+                #update_finalizer
 
-                        #update_finalizer
-
-                        Ok(requeue)
-                    };
-                    #[allow(unreachable_code)]
-                    __ret
-                })
+                Ok(requeue)
             }
         }
 
@@ -314,6 +292,92 @@ pub fn kubus(args: TokenStream, input: TokenStream) -> TokenStream {
                 context: ::std::sync::Arc<::kubus::Context<#context_ty>>,
             ) -> ::std::result::Result<(), #error_ty> {
                 <#struct_name as ::kubus::Handler<#resource_ty, #context_ty, #error_ty>>::run(self, client, context).await
+            }
+        }
+    }
+    .into()
+}
+
+enum AdmissionKind {
+    Validating,
+    Mutating,
+}
+
+#[derive(Default)]
+struct AdmissionHandlerAttrs {
+    kind: Option<AdmissionKind>,
+}
+
+impl AdmissionHandlerAttrs {
+    fn parse(&mut self, meta: ParseNestedMeta) -> syn::parse::Result<()> {
+        if meta.path.is_ident("validating") && self.kind.is_none() {
+            self.kind = Some(AdmissionKind::Validating);
+            Ok(())
+        } else if meta.path.is_ident("mutating") && self.kind.is_none() {
+            self.kind = Some(AdmissionKind::Mutating);
+            Ok(())
+        } else {
+            Err(meta.error("unsupported kubus property"))
+        }
+    }
+}
+
+#[proc_macro_attribute]
+pub fn admission(args: TokenStream, input: TokenStream) -> TokenStream {
+    let mut attrs = AdmissionHandlerAttrs::default();
+    let attr_parser = syn::meta::parser(|meta| attrs.parse(meta));
+    parse_macro_input!(args with attr_parser);
+
+    let kind = attrs.kind.expect("admission attribute must specify either 'mutating' or 'validating'");
+
+    let func = parse_macro_input!(input as ItemFn);
+    let func_name = &func.sig.ident;
+    let name_string = LitStr::new(&func_name.to_string(), func_name.span());
+
+    // Extract error type from return type
+    let error_ty = extract_function_return_error_type(&func)
+        .cloned()
+        .unwrap_or_else(|| parse_quote! { ::kubus::HandlerError });
+
+    let internal_func = {
+        let mut func = func.clone();
+        func.sig.ident = internal_prefix(func.sig.ident);
+        func
+    };
+    let internal_func_name = &internal_func.sig.ident;
+
+    let (trait_name, method_name): (Type, Ident) = match kind {
+        AdmissionKind::Mutating => (
+            parse_quote! { ::kubus::admission::MutatingAdmissionHandler },
+            Ident::new("mutate", func_name.span()),
+        ),
+        AdmissionKind::Validating => (
+            parse_quote! { ::kubus::admission::ValidatingAdmissionHandler },
+            Ident::new("validate", func_name.span()),
+        ),
+    };
+
+    quote! {
+        #[allow(non_snake_case)]
+        #internal_func
+
+        #[allow(non_camel_case_types)]
+        #[doc(hidden)]
+        pub struct #func_name;
+
+        #[::async_trait::async_trait]
+        impl #trait_name for #func_name {
+            type Err = #error_ty;
+
+            fn name(&self) -> &'static str {
+                #name_string
+            }
+
+            async fn #method_name(
+                &self,
+                req: &::kube::core::admission::AdmissionRequest<::kube::api::DynamicObject>,
+            ) -> ::std::result::Result<::kube::core::admission::AdmissionResponse, Self::Err> {
+                #internal_func_name(req).await
             }
         }
     }
