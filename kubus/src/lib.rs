@@ -158,6 +158,13 @@ pub mod finalizer;
 #[doc(inline)]
 pub use finalizer::{apply_finalizer, remove_finalizer};
 
+#[cfg(feature = "admission")]
+pub mod admission;
+
+pub trait Named {
+    const NAME: &'static str;
+}
+
 /// Print list of CRD's to stdout as serialized yaml
 ///
 /// ```rust,no_run

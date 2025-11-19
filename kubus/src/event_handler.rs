@@ -11,7 +11,7 @@ use kube::runtime::watcher::Config;
 use kube::{Api, Client, Resource};
 use serde::de::DeserializeOwned;
 
-use crate::{Context, Error};
+use crate::{Context, Error, Named};
 
 /// Errors that can occur during event handler execution
 #[derive(thiserror::Error, Debug)]
@@ -45,8 +45,6 @@ where
     S: Clone + Send + Sync + 'static,
     E: StdError + Send + Sync + 'static,
 {
-    const NAME: &'static str;
-
     const LABEL_SELECTOR: Option<&'static str> = None;
 
     const FIELD_SELECTOR: Option<&'static str> = None;
@@ -94,7 +92,7 @@ where
 
 pub(crate) struct EventHandlerWrapper<H, K, S, E>
 where
-    H: EventHandler<K, S, E>,
+    H: EventHandler<K, S, E> + Named,
     K: Resource + Clone + DeserializeOwned + Debug + Send + Sync + 'static,
     K::DynamicType: Clone + Debug + Default + Hash + Unpin + Eq,
     S: Clone + Send + Sync + 'static,
@@ -106,7 +104,7 @@ where
 
 impl<H, K, S, E> EventHandlerWrapper<H, K, S, E>
 where
-    H: EventHandler<K, S, E>,
+    H: EventHandler<K, S, E> + Named,
     K: Resource + Clone + DeserializeOwned + Debug + Send + Sync + 'static,
     K::DynamicType: Clone + Debug + Default + Hash + Unpin + Eq,
     S: Clone + Send + Sync + 'static,
@@ -133,7 +131,7 @@ where
 #[async_trait]
 impl<H, K, S, E> DynEventHandler<E> for EventHandlerWrapper<H, K, S, E>
 where
-    H: EventHandler<K, S, E> + Send + Sync + 'static,
+    H: EventHandler<K, S, E> + Named + Send + Sync + 'static,
     K: Resource + Clone + DeserializeOwned + Debug + Send + Sync + 'static,
     K::DynamicType: Clone + Debug + Default + Hash + Unpin + Eq,
     S: Clone + Send + Sync + 'static,

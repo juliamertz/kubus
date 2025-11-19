@@ -19,3 +19,12 @@ futures = "0.3.31"
 tracing = "0.1.41"
 thiserror = "2.0.17"
 async-trait = "0.1.89"
+warp = { version = "0.3", default-features = false, features = ["tls"] }
+tracing-subscriber = "0.3.20"
+
+[dev-dependencies]
+tracing-subscriber = "0.3.20"
+
+[features]
+default = ["admission"]
+admission = ["kube/admission"]

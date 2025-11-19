@@ -1,14 +1,16 @@
 use std::sync::Arc;
 
 use k8s_openapi::api::core::v1::Pod;
-use kube::{Client, ResourceExt};
-use kubus::{Context, HandlerError, Operator, kubus};
+use kube::{Client, ResourceExt, api::DynamicObject, core::admission::AdmissionResponse};
+use kubus::{admission::AdmissionHandler, kubus, webhook, Context, HandlerError, Named, Operator};
 
 #[derive(Debug, Clone)]
 struct State {}
 
 #[tokio::main]
 async fn main() -> Result<(), kubus::Error> {
+    tracing_subscriber::fmt().init();
+
     let client = Client::try_default().await?;
     let state = State {};
 
@@ -16,9 +18,31 @@ async fn main() -> Result<(), kubus::Error> {
         .with_context((client, state))
         .handler(on_pod_apply)
         .handler(on_pod_delete)
+        .mutator(MyHandler)
         .run()
         .await
 }
+
+struct MyHandler;
+
+impl Named for MyHandler {
+    const NAME: &str = "MyHandler";
+}
+
+#[async_trait::async_trait]
+impl AdmissionHandler<HandlerError> for MyHandler {
+    async fn handle(
+        &self,
+        res: AdmissionResponse,
+        obj: &DynamicObject,
+    ) -> Result<AdmissionResponse, HandlerError> {
+        dbg!(&res, obj);
+        Ok(res)
+    }
+}
+
+#[webhook(mutating)]
+fn derive_handler() {}
 
 #[kubus(
     event = Apply,

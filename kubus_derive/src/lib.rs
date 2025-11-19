@@ -32,43 +32,6 @@ impl ToTokens for EventType {
     }
 }
 
-#[derive(Default)]
-struct Attrs {
-    event: Option<EventType>,
-    finalizer: Option<LitStr>,
-    label_selector: Option<LitStr>,
-    field_selector: Option<LitStr>,
-    requeue_interval: Option<LitInt>,
-}
-
-impl Attrs {
-    fn parse(&mut self, meta: ParseNestedMeta) -> syn::parse::Result<()> {
-        if meta.path.is_ident("event") {
-            let str: Ident = meta.value()?.parse()?;
-            self.event = Some(
-                str.to_string()
-                    .try_into()
-                    .map_err(|err| syn::parse::Error::new(str.span(), err))?,
-            );
-            Ok(())
-        } else if meta.path.is_ident("finalizer") {
-            self.finalizer = Some(meta.value()?.parse()?);
-            Ok(())
-        } else if meta.path.is_ident("label_selector") {
-            self.label_selector = Some(meta.value()?.parse()?);
-            Ok(())
-        } else if meta.path.is_ident("field_selector") {
-            self.field_selector = Some(meta.value()?.parse()?);
-            Ok(())
-        } else if meta.path.is_ident("requeue_interval") {
-            self.requeue_interval = Some(meta.value()?.parse()?);
-            Ok(())
-        } else {
-            Err(meta.error("unsupported kubus property"))
-        }
-    }
-}
-
 fn extract_generic_arg(ty: &Type, pos: usize) -> Option<&Type> {
     if let syn::Type::Path(type_path) = ty
         && let Some(last_segment) = type_path.path.segments.get(pos)
@@ -132,6 +95,43 @@ where
     }
 }
 
+#[derive(Default)]
+struct EventHandlerAttrs {
+    event: Option<EventType>,
+    finalizer: Option<LitStr>,
+    label_selector: Option<LitStr>,
+    field_selector: Option<LitStr>,
+    requeue_interval: Option<LitInt>,
+}
+
+impl EventHandlerAttrs {
+    fn parse(&mut self, meta: ParseNestedMeta) -> syn::parse::Result<()> {
+        if meta.path.is_ident("event") {
+            let str: Ident = meta.value()?.parse()?;
+            self.event = Some(
+                str.to_string()
+                    .try_into()
+                    .map_err(|err| syn::parse::Error::new(str.span(), err))?,
+            );
+            Ok(())
+        } else if meta.path.is_ident("finalizer") {
+            self.finalizer = Some(meta.value()?.parse()?);
+            Ok(())
+        } else if meta.path.is_ident("label_selector") {
+            self.label_selector = Some(meta.value()?.parse()?);
+            Ok(())
+        } else if meta.path.is_ident("field_selector") {
+            self.field_selector = Some(meta.value()?.parse()?);
+            Ok(())
+        } else if meta.path.is_ident("requeue_interval") {
+            self.requeue_interval = Some(meta.value()?.parse()?);
+            Ok(())
+        } else {
+            Err(meta.error("unsupported kubus property"))
+        }
+    }
+}
+
 /// A procedural macro for defining Kubernetes event handlers in the Kubus framework.
 ///
 /// # Attributes
@@ -192,7 +192,7 @@ where
 /// ```
 #[proc_macro_attribute]
 pub fn kubus(args: TokenStream, input: TokenStream) -> TokenStream {
-    let mut attrs = Attrs::default();
+    let mut attrs = EventHandlerAttrs::default();
     let attr_parser = syn::meta::parser(|meta| attrs.parse(meta));
     parse_macro_input!(args with attr_parser);
 
@@ -248,9 +248,11 @@ pub fn kubus(args: TokenStream, input: TokenStream) -> TokenStream {
         #[doc(hidden)]
         pub struct #struct_name;
 
-        impl ::kubus::EventHandler<#resource_ty, #context_ty, #error_ty> for #struct_name {
+        impl ::kubus::Named for #struct_name {
             const NAME: &'static str = #handler_name;
+        }
 
+        impl ::kubus::EventHandler<#resource_ty, #context_ty, #error_ty> for #struct_name {
             const FIELD_SELECTOR: Option<&'static str> = #field_selector;
 
             const LABEL_SELECTOR: Option<&'static str> = #label_selector;
@@ -300,6 +302,62 @@ pub fn kubus(args: TokenStream, input: TokenStream) -> TokenStream {
                     __ret
                 })
             }
+        }
+    }
+    .into()
+}
+
+enum AdmissionKind {
+    Validating,
+    Mutating,
+}
+
+#[derive(Default)]
+struct AdmissionHandlerAttrs {
+    kind: Option<AdmissionKind>,
+}
+
+impl AdmissionHandlerAttrs {
+    fn parse(&mut self, meta: ParseNestedMeta) -> syn::parse::Result<()> {
+        if meta.path.is_ident("validating") && self.kind.is_none() {
+            self.kind = Some(AdmissionKind::Validating);
+            Ok(())
+        } else if meta.path.is_ident("mutating") && self.kind.is_none() {
+            self.kind = Some(AdmissionKind::Mutating);
+            Ok(())
+        } else {
+            Err(meta.error("unsupported kubus property"))
+        }
+    }
+}
+
+#[proc_macro_attribute]
+pub fn webhook(args: TokenStream, input: TokenStream) -> TokenStream {
+    let mut attrs = AdmissionHandlerAttrs::default();
+    let attr_parser = syn::meta::parser(|meta| attrs.parse(meta));
+    parse_macro_input!(args with attr_parser);
+
+    let func = parse_macro_input!(input as ItemFn);
+    let func_name = &func.sig.ident;
+    let name_string = LitStr::new(&func_name.to_string(), func_name.span());
+
+    let internal_func = {
+        let mut func = func.clone();
+        func.sig.ident = internal_prefix(func.sig.ident);
+        func
+    };
+    let internal_func_name = &internal_func.sig.ident;
+
+    quote! {
+        #[allow(non_snake_case)]
+        #internal_func
+
+        #[allow(non_snake_case)]
+        #[doc(hidden)]
+        pub struct #func_name;
+
+        impl ::kubus::Named for #func_name {
+            const NAME: &str = #name_string;
         }
     }
     .into()
