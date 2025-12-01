@@ -8,72 +8,19 @@ use kube::api::DynamicObject;
 use kube::core::admission::{AdmissionRequest, AdmissionResponse, AdmissionReview};
 use tracing::{error, info, warn};
 
-use crate::Named;
-
 #[async_trait]
-pub trait AdmissionHandler<E> {
-    async fn handle(
-        &self,
-        res: AdmissionResponse,
-        obj: &DynamicObject,
-    ) -> Result<AdmissionResponse, E>;
-}
-
-#[async_trait]
-pub(crate) trait DynAdmissionHandler<E>: Send + Sync
-where
-    E: Error + Send + Sync + 'static,
-{
-    fn name(&self) -> &'static str;
+pub trait AdmissionHandler {
+    type Err;
 
     async fn handle(
         &self,
         res: AdmissionResponse,
         obj: &DynamicObject,
-    ) -> Result<AdmissionResponse, E>;
+    ) -> Result<AdmissionResponse, Self::Err>;
 }
 
-pub(crate) struct AdmissionHandlerWrapper<E, H>
-where
-    E: Error + Sync + Send + 'static,
-    H: AdmissionHandler<E> + Named + Sync + Send + 'static,
-{
-    _phantom: std::marker::PhantomData<(E, H)>,
-}
-
-impl<E, H> Default for AdmissionHandlerWrapper<E, H>
-where
-    E: Error + Sync + Send + 'static,
-    H: AdmissionHandler<E> + Named + Sync + Send + 'static,
-{
-    fn default() -> Self {
-        Self {
-            _phantom: std::marker::PhantomData::default(),
-        }
-    }
-}
-
-#[async_trait]
-impl<E, H> DynAdmissionHandler<E> for AdmissionHandlerWrapper<E, H>
-where
-    E: Error + Sync + Send + 'static,
-    H: AdmissionHandler<E> + Named + Sync + Send + 'static,
-{
-    fn name(&self) -> &'static str {
-        H::NAME
-    }
-
-    async fn handle(
-        &self,
-        res: AdmissionResponse,
-        obj: &DynamicObject,
-    ) -> Result<AdmissionResponse, E> {
-        todo!()
-    }
-}
-
-pub(crate) fn create_mutate_handler<E: Error + Send + Sync + 'static>(
-    handlers: Vec<Box<dyn DynAdmissionHandler<E>>>,
+pub(crate) fn create_route<E: Error + Send + Sync + 'static>(
+    handlers: Vec<Box<dyn AdmissionHandler<Err = E> + Send + Sync + 'static>>,
 ) -> impl Fn(
     AdmissionReview<DynamicObject>,
 ) -> std::pin::Pin<Box<dyn Future<Output = Result<warp::reply::Json, Infallible>> + Send>>

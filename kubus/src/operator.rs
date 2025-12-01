@@ -1,9 +1,10 @@
 use std::error::Error as StdError;
 use std::fmt::Debug;
 use std::hash::Hash;
+use std::sync::Arc;
+
 #[cfg(feature = "admission")]
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use kube::Resource;
 use serde::de::DeserializeOwned;
@@ -13,7 +14,7 @@ use warp::Filter;
 
 use crate::Named;
 #[cfg(feature = "admission")]
-use crate::admission::{create_mutate_handler, AdmissionHandler, AdmissionHandlerWrapper, DynAdmissionHandler};
+use crate::admission::AdmissionHandler;
 use crate::context::Context;
 use crate::event_handler::{DynEventHandler, EventHandler, EventHandlerWrapper};
 
@@ -27,7 +28,9 @@ where
     context: Arc<Context<S>>,
     event_handlers: Vec<Box<dyn DynEventHandler<E>>>,
     #[cfg(feature = "admission")]
-    mutating_admission_handlers: Vec<Box<dyn DynAdmissionHandler<E>>>,
+    validating_handlers: Vec<Box<dyn AdmissionHandler<Err = E> + Send + Sync + 'static>>,
+    #[cfg(feature = "admission")]
+    mutating_handlers: Vec<Box<dyn AdmissionHandler<Err = E> + Send + Sync + 'static>>,
     #[cfg(feature = "admission")]
     tls_certs_path: Option<PathBuf>,
 }
@@ -43,7 +46,9 @@ where
             context,
             event_handlers: Default::default(),
             #[cfg(feature = "admission")]
-            mutating_admission_handlers: Default::default(),
+            validating_handlers: Default::default(),
+            #[cfg(feature = "admission")]
+            mutating_handlers: Default::default(),
             #[cfg(feature = "admission")]
             tls_certs_path: Default::default(),
         }
@@ -79,22 +84,24 @@ where
     }
 
     #[cfg(feature = "admission")]
-    pub fn mutator<H>(mut self, _: H) -> Self
+    pub fn validator<H>(mut self, handler: H) -> Self
     where
         E: StdError + Sync + Send + 'static,
-        H: AdmissionHandler<E> + Named + Sync + Send + 'static,
+        H: AdmissionHandler<Err = E> + Named + Sync + Send + 'static,
     {
-        let wrapper = AdmissionHandlerWrapper::<E, H>::default();
-        self.mutating_admission_handlers.push(Box::new(wrapper));
+        self.validating_handlers.push(Box::new(handler));
         self
     }
-    // pub fn mutator<H>(mut self, handler: H) -> Self
-    // where
-    //     H: AdmissionHandler + Send + Sync + 'static,
-    // {
-    //     self.mutating_admission_handlers.push(Box::new(handler));
-    //     self
-    // }
+
+    #[cfg(feature = "admission")]
+    pub fn mutator<H>(mut self, handler: H) -> Self
+    where
+        E: StdError + Sync + Send + 'static,
+        H: AdmissionHandler<Err = E> + Named + Sync + Send + 'static,
+    {
+        self.mutating_handlers.push(Box::new(handler));
+        self
+    }
 
     /// Runs the operator, starting all registered handlers
     ///
@@ -121,18 +128,27 @@ where
         }
 
         #[cfg(feature = "admission")]
-        if !self.mutating_admission_handlers.is_empty() {
+        if !self.mutating_handlers.is_empty() || !self.validating_handlers.is_empty() {
             tracing::info!("starting admission server");
 
-            let mutate_handler = create_mutate_handler(self.mutating_admission_handlers);
+            let validate_handler = crate::admission::create_route(self.validating_handlers);
+            let mutate_handler = crate::admission::create_route(self.mutating_handlers);
 
             let addr = ([0, 0, 0, 0], 8443);
-            let routes = warp::post().and(
-                warp::path("mutate")
-                    .and(warp::body::json())
-                    .and_then(mutate_handler)
-                    .with(warp::trace::request()),
-            );
+            let routes = warp::post()
+                .and(
+                    warp::path("mutate")
+                        .and(warp::body::json())
+                        .and_then(mutate_handler)
+                        .with(warp::trace::request()),
+                )
+                .or(
+                    warp::path("validate")
+                        .and(warp::body::json())
+                        .and_then(validate_handler)
+                        .with(warp::trace::request()),
+                )
+;
 
             if let Some(path) = self.tls_certs_path {
                 set.spawn(

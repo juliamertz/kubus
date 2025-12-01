@@ -30,7 +30,9 @@ impl Named for MyHandler {
 }
 
 #[async_trait::async_trait]
-impl AdmissionHandler<HandlerError> for MyHandler {
+impl AdmissionHandler for MyHandler {
+    type Err = HandlerError;
+
     async fn handle(
         &self,
         res: AdmissionResponse,
