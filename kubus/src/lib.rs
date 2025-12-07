@@ -148,7 +148,7 @@ pub use context::Context;
 
 pub mod event_handler;
 #[doc(inline)]
-pub use event_handler::{EventHandler, EventType, HandlerError};
+pub use event_handler::{EventType, Handler, HandlerError, Runnable};
 
 pub mod operator;
 #[doc(inline)]

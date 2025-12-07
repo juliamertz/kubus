@@ -1,25 +1,19 @@
 use std::error::Error as StdError;
-use std::fmt::Debug;
-use std::hash::Hash;
 use std::sync::Arc;
 
-use kube::Resource;
-use serde::de::DeserializeOwned;
 use tokio::task::JoinSet;
 use tracing::Instrument;
 
 use crate::context::Context;
-use crate::event_handler::{DynEventHandler, EventHandler, EventHandlerWrapper};
+use crate::event_handler::Runnable;
 
-/// Kubernetes operator managing multiple resource handlers
-///
-/// Use with the `#[kubus]` derive macro to register handlers for different resource types.
+/// Kubernetes operator that manages multiple handlers
 pub struct Operator<S, E>
 where
     S: Clone,
 {
     context: Arc<Context<S>>,
-    handlers: Vec<Box<dyn DynEventHandler<E>>>,
+    handlers: Vec<Box<dyn Runnable<S, E>>>,
 }
 
 impl<S, E> Operator<S, E>
@@ -27,55 +21,46 @@ where
     S: Clone + Send + Sync + 'static,
     E: StdError + Send + Sync + 'static,
 {
-    /// Creates a new operator
     pub fn new(context: Arc<Context<S>>) -> Self {
         Self {
             context,
-            handlers: Default::default(),
+            handlers: Vec::new(),
         }
     }
 
-    /// Registers an event handler for a resource type
-    ///
-    /// Chain multiple calls to register handlers for different resources.
+    /// Registers a handler
     #[must_use]
-    pub fn handler<H, K>(mut self, _: H) -> Self
+    pub fn handler<H>(mut self, handler: H) -> Self
     where
-        H: EventHandler<K, S, E> + Send + Sync + 'static,
-        K: Resource + Clone + DeserializeOwned + Debug + Send + Sync + 'static,
-        K::DynamicType: Clone + Debug + Default + Hash + Unpin + Eq,
+        H: Runnable<S, E> + Send + Sync + 'static,
     {
-        let wrapper = EventHandlerWrapper::<H, K, S, E>::new(self.context.clone());
-        self.handlers.push(Box::new(wrapper));
+        self.handlers.push(Box::new(handler));
         self
     }
 
     /// Runs the operator, starting all registered handlers
-    ///
-    /// Blocks until all handlers complete (typically on shutdown).
     pub async fn run(self) -> crate::Result<()> {
-        tracing::info!(
-            "starting kubus operator with {} handlers",
-            self.handlers.len()
-        );
+        tracing::info!("starting operator with {} handlers", self.handlers.len());
 
         let mut set = JoinSet::new();
 
         for handler in self.handlers {
             let client = self.context.client.clone();
-            let span = tracing::info_span!("handler", name = handler.name());
-            let task = async move {
-                let client = client.clone();
-                if let Err(err) = handler.run(client).await {
-                    tracing::error!({ err = &err as &dyn StdError }, "handler error");
-                }
-            };
+            let context = self.context.clone();
+            let name = handler.name();
+            let span = tracing::info_span!("handler", name);
 
-            set.spawn(task.instrument(span));
+            set.spawn(
+                async move {
+                    if let Err(err) = handler.run(client, context).await {
+                        tracing::error!({ err = &err as &dyn StdError }, "handler error");
+                    }
+                }
+                .instrument(span),
+            );
         }
 
         set.join_all().await;
-
         Ok(())
     }
 }
@@ -84,7 +69,6 @@ where
 pub struct OperatorBuilder;
 
 impl OperatorBuilder {
-    /// Attach context to operator builder
     pub fn with_context<S>(self, context: impl Into<Context<S>>) -> OperatorBuilderWithContext<S>
     where
         S: Clone + Send + Sync + 'static,
@@ -95,7 +79,6 @@ impl OperatorBuilder {
 }
 
 impl Operator<(), ()> {
-    /// Start building an Operator
     #[must_use]
     pub const fn builder() -> OperatorBuilder {
         OperatorBuilder
@@ -114,20 +97,15 @@ impl<S> OperatorBuilderWithContext<S>
 where
     S: Clone + Send + Sync + 'static,
 {
-    /// Registers an event handler for a resource type
-    ///
-    /// Chain multiple calls to register handlers for different resources.
+    /// Registers a handler
     #[must_use]
-    pub fn handler<H, K, E>(self, _: H) -> Operator<S, E>
+    pub fn handler<H, E>(self, handler: H) -> Operator<S, E>
     where
-        H: EventHandler<K, S, E> + Send + Sync + 'static,
+        H: Runnable<S, E> + Send + Sync + 'static,
         E: StdError + Send + Sync + 'static,
-        K: Resource + Clone + DeserializeOwned + Debug + Send + Sync + 'static,
-        K::DynamicType: Clone + Debug + Default + Hash + Unpin + Eq,
     {
-        let wrapper = EventHandlerWrapper::<H, K, S, E>::new(self.context.clone());
         let mut operator = Operator::<S, E>::new(self.context);
-        operator.handlers.push(Box::new(wrapper));
+        operator.handlers.push(Box::new(handler));
         operator
     }
 }

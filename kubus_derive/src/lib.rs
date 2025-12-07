@@ -248,14 +248,14 @@ pub fn kubus(args: TokenStream, input: TokenStream) -> TokenStream {
         #[doc(hidden)]
         pub struct #struct_name;
 
-        impl ::kubus::EventHandler<#resource_ty, #context_ty, #error_ty> for #struct_name {
+        impl ::kubus::Handler<#resource_ty, #context_ty, #error_ty> for #struct_name {
             const NAME: &'static str = #handler_name;
 
             const FIELD_SELECTOR: Option<&'static str> = #field_selector;
 
             const LABEL_SELECTOR: Option<&'static str> = #label_selector;
 
-            fn handler<'async_trait>(
+            fn handle<'async_trait>(
                 resource: ::std::sync::Arc<#resource_ty>,
                 context: ::std::sync::Arc<::kubus::Context<#context_ty>>,
             ) -> ::core::pin::Pin<
@@ -299,6 +299,21 @@ pub fn kubus(args: TokenStream, input: TokenStream) -> TokenStream {
                     #[allow(unreachable_code)]
                     __ret
                 })
+            }
+        }
+
+        #[::async_trait::async_trait]
+        impl ::kubus::Runnable<#context_ty, #error_ty> for #struct_name {
+            fn name(&self) -> &'static str {
+                <#struct_name as ::kubus::Handler<#resource_ty, #context_ty, #error_ty>>::NAME
+            }
+
+            async fn run(
+                &self,
+                client: ::kube::Client,
+                context: ::std::sync::Arc<::kubus::Context<#context_ty>>,
+            ) -> ::std::result::Result<(), #error_ty> {
+                <#struct_name as ::kubus::Handler<#resource_ty, #context_ty, #error_ty>>::run(self, client, context).await
             }
         }
     }
