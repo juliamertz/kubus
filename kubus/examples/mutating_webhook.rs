@@ -24,8 +24,8 @@ async fn main() -> Result<(), kubus::Error> {
 async fn inject_label(
     req: &kube::core::admission::AdmissionRequest<kube::api::DynamicObject>,
 ) -> Result<kube::core::admission::AdmissionResponse, HandlerError> {
-    use json_patch::{Patch, PatchOperation, AddOperation};
     use json_patch::jsonptr::PointerBuf;
+    use json_patch::{AddOperation, Patch, PatchOperation};
     use serde_json::json;
 
     // Check if the label already exists
@@ -51,10 +51,12 @@ async fn inject_label(
 
     kube::core::admission::AdmissionResponse::from(req)
         .with_patch(patches)
-        .map_err(|e| HandlerError::KubusError(kubus::Error::SerializationError(
-            serde_json::Error::io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("Failed to serialize JSON patch: {}", e),
-            ))
-        )))
+        .map_err(|e| {
+            HandlerError::KubusError(kubus::Error::SerializationError(serde_json::Error::io(
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("Failed to serialize JSON patch: {}", e),
+                ),
+            )))
+        })
 }

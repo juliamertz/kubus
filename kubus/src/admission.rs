@@ -4,9 +4,9 @@ use std::future::Future;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use kube::ResourceExt;
 use kube::api::DynamicObject;
 use kube::core::admission::{AdmissionRequest, AdmissionResponse, AdmissionReview};
-use kube::ResourceExt;
 use tracing::{error, info, warn};
 
 /// Trait for mutating admission webhook handlers
@@ -268,7 +268,9 @@ fn merge_responses(mut base: AdmissionResponse, other: AdmissionResponse) -> Adm
 
     // Combine patches from both responses
     // Both patches are serialized as JSON arrays of patch operations
-    if let (Some(base_patch_bytes), Some(other_patch_bytes)) = (base.patch.as_ref(), other.patch.as_ref()) {
+    if let (Some(base_patch_bytes), Some(other_patch_bytes)) =
+        (base.patch.as_ref(), other.patch.as_ref())
+    {
         // Deserialize both patches
         if let (Ok(base_patches), Ok(other_patches)) = (
             serde_json::from_slice::<Vec<serde_json::Value>>(base_patch_bytes),
@@ -277,7 +279,7 @@ fn merge_responses(mut base: AdmissionResponse, other: AdmissionResponse) -> Adm
             // Combine the patch operations
             let mut combined = base_patches;
             combined.extend_from_slice(&other_patches);
-            
+
             // Re-serialize the combined patches
             if let Ok(combined_bytes) = serde_json::to_vec(&combined) {
                 base.patch = Some(combined_bytes);
@@ -313,22 +315,24 @@ mod tests {
             &self,
             req: &AdmissionRequest<DynamicObject>,
         ) -> Result<AdmissionResponse, Self::Err> {
-            use json_patch::{Patch, PatchOperation, AddOperation};
             use json_patch::jsonptr::PointerBuf;
+            use json_patch::{AddOperation, Patch, PatchOperation};
 
             if req.object.as_ref().and_then(|o| o.metadata.name.as_deref()) == Some("test-pod") {
                 let patches = Patch(vec![PatchOperation::Add(AddOperation {
                     path: PointerBuf::parse("/metadata/labels/test-label").unwrap(),
                     value: json!("test-value"),
                 })]);
-                Ok(AdmissionResponse::from(req).with_patch(patches).map_err(|e| {
-                    HandlerError::KubusError(crate::Error::SerializationError(
-                        serde_json::Error::io(std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            format!("Failed to serialize patch: {}", e),
-                        )),
-                    ))
-                })?)
+                Ok(AdmissionResponse::from(req)
+                    .with_patch(patches)
+                    .map_err(|e| {
+                        HandlerError::KubusError(crate::Error::SerializationError(
+                            serde_json::Error::io(std::io::Error::new(
+                                std::io::ErrorKind::Other,
+                                format!("Failed to serialize patch: {}", e),
+                            )),
+                        ))
+                    })?)
             } else {
                 Ok(AdmissionResponse::from(req))
             }
@@ -407,7 +411,10 @@ mod tests {
 
         let resp = handler.mutate(&req).await.unwrap();
         assert!(resp.allowed);
-        assert!(resp.patch.is_none(), "Should not have patches for other-pod");
+        assert!(
+            resp.patch.is_none(),
+            "Should not have patches for other-pod"
+        );
     }
 
     #[tokio::test]
@@ -432,11 +439,14 @@ mod tests {
     async fn test_merge_responses() {
         let req1 = create_test_request("test");
         let req2 = create_test_request("test");
-        
+
         let resp1 = AdmissionResponse::from(&req1);
         let resp2 = AdmissionResponse::from(&req2).deny("test denial");
-        
+
         let merged = merge_responses(resp1, resp2);
-        assert!(!merged.allowed, "Merged response should deny when second response denies");
+        assert!(
+            !merged.allowed,
+            "Merged response should deny when second response denies"
+        );
     }
 }

@@ -117,7 +117,8 @@ where
                 "starting admission webhook server"
             );
 
-            let validate_handler = crate::admission::create_validating_route(self.validating_handlers);
+            let validate_handler =
+                crate::admission::create_validating_route(self.validating_handlers);
             let mutate_handler = crate::admission::create_mutating_route(self.mutating_handlers);
 
             let addr = ([0, 0, 0, 0], 8443);
@@ -128,12 +129,10 @@ where
                         .and_then(mutate_handler)
                         .with(warp::trace::request()),
                 )
-                .or(
-                    warp::path("validate")
-                        .and(warp::body::json())
-                        .and_then(validate_handler)
-                        .with(warp::trace::request()),
-                );
+                .or(warp::path("validate")
+                    .and(warp::body::json())
+                    .and_then(validate_handler)
+                    .with(warp::trace::request()));
 
             if let Some(path) = self.tls_certs_path {
                 set.spawn(
@@ -144,7 +143,9 @@ where
                         .run(addr),
                 );
             } else {
-                tracing::warn!("admission webhook server running without TLS - not suitable for production");
+                tracing::warn!(
+                    "admission webhook server running without TLS - not suitable for production"
+                );
                 set.spawn(warp::serve(routes).run(addr));
             }
         }
@@ -227,7 +228,10 @@ where
     /// Sets the path to TLS certificates for the admission webhook server
     #[cfg(feature = "admission")]
     #[must_use]
-    pub fn with_tls_certs<H, E>(self, path: impl Into<PathBuf>) -> OperatorBuilderWithContextAndTls<S>
+    pub fn with_tls_certs<H, E>(
+        self,
+        path: impl Into<PathBuf>,
+    ) -> OperatorBuilderWithContextAndTls<S>
     where
         E: StdError + Send + Sync + 'static,
     {

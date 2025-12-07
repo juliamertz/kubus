@@ -328,7 +328,9 @@ pub fn admission(args: TokenStream, input: TokenStream) -> TokenStream {
     let attr_parser = syn::meta::parser(|meta| attrs.parse(meta));
     parse_macro_input!(args with attr_parser);
 
-    let kind = attrs.kind.expect("admission attribute must specify either 'mutating' or 'validating'");
+    let kind = attrs
+        .kind
+        .expect("admission attribute must specify either 'mutating' or 'validating'");
 
     let func = parse_macro_input!(input as ItemFn);
     let func_name = &func.sig.ident;

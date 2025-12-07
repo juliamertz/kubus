@@ -36,10 +36,8 @@ async fn validate_security(
             if let Some(security_context) = spec.get("securityContext") {
                 if let Some(run_as_user) = security_context.get("runAsUser") {
                     if run_as_user.as_u64() == Some(0) {
-                        return Ok(
-                            kube::core::admission::AdmissionResponse::from(req)
-                                .deny("Pods cannot run as root (runAsUser=0)")
-                        );
+                        return Ok(kube::core::admission::AdmissionResponse::from(req)
+                            .deny("Pods cannot run as root (runAsUser=0)"));
                     }
                 }
             }
@@ -50,10 +48,8 @@ async fn validate_security(
                     if let Some(security_context) = container.get("securityContext") {
                         if let Some(run_as_user) = security_context.get("runAsUser") {
                             if run_as_user.as_u64() == Some(0) {
-                                return Ok(
-                                    kube::core::admission::AdmissionResponse::from(req)
-                                        .deny("Containers cannot run as root (runAsUser=0)")
-                                );
+                                return Ok(kube::core::admission::AdmissionResponse::from(req)
+                                    .deny("Containers cannot run as root (runAsUser=0)"));
                             }
                         }
                     }
