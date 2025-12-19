@@ -34,9 +34,9 @@ impl ToTokens for EventType {
 
 fn extract_generic_arg(ty: &Type, pos: usize) -> Option<&Type> {
     if let syn::Type::Path(type_path) = ty
-        && let Some(last_segment) = type_path.path.segments.get(pos)
+        && let Some(last_segment) = type_path.path.segments.last()
         && let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments
-        && let Some(syn::GenericArgument::Type(inner_type)) = args.args.first()
+        && let Some(syn::GenericArgument::Type(inner_type)) = args.args.get(pos)
     {
         return Some(inner_type);
     }
@@ -76,7 +76,7 @@ fn extract_context_type(func: &ItemFn) -> Option<&Type> {
 }
 
 fn extract_function_return_error_type(func: &ItemFn) -> Option<&Type> {
-    extract_return_type(func).and_then(|ty| extract_generic_arg(ty, 2))
+    extract_return_type(func).and_then(|ty| extract_generic_arg(ty, 1))
 }
 
 fn internal_prefix(ident: Ident) -> Ident {
