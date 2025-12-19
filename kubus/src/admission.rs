@@ -9,47 +9,6 @@ use kube::api::DynamicObject;
 use kube::core::admission::{AdmissionRequest, AdmissionResponse, AdmissionReview};
 use tracing::{error, info, warn};
 
-/// Trait for mutating admission webhook handlers
-///
-/// Mutating admission webhooks can modify resources before they are persisted.
-/// Common use cases include:
-/// - Injecting sidecar containers
-/// - Setting default values
-/// - Adding labels or annotations
-/// - Modifying resource requests/limits
-///
-/// # Example
-///
-/// ```rust,no_run
-/// use kube::api::DynamicObject;
-/// use kube::core::admission::{AdmissionRequest, AdmissionResponse};
-/// use kubus::admission::MutatingAdmissionHandler;
-/// use kubus::HandlerError;
-///
-/// struct MyMutator;
-///
-/// #[async_trait::async_trait]
-/// impl MutatingAdmissionHandler for MyMutator {
-///     type Err = HandlerError;
-///
-///     async fn mutate(
-///         &self,
-///         req: &AdmissionRequest<DynamicObject>,
-///     ) -> Result<AdmissionResponse, Self::Err> {
-///         // Modify the object and return patches
-///         use json_patch::{Patch, PatchOperation, AddOperation};
-///         use json_patch::jsonptr::PointerBuf;
-///         use serde_json::json;
-///         let patches = Patch(vec![
-///             PatchOperation::Add(AddOperation {
-///                 path: PointerBuf::parse("/metadata/labels/my-label").unwrap(),
-///                 value: json!("my-value"),
-///             }),
-///         ]);
-///         Ok(AdmissionResponse::from(req).with_patch(patches)?)
-///     }
-/// }
-/// ```
 #[async_trait]
 pub trait MutatingAdmissionHandler: Send + Sync {
     /// Error type returned by the handler
@@ -69,42 +28,6 @@ pub trait MutatingAdmissionHandler: Send + Sync {
     ) -> Result<AdmissionResponse, Self::Err>;
 }
 
-/// Trait for validating admission webhook handlers
-///
-/// Validating admission webhooks can accept or reject API requests.
-/// Common use cases include:
-/// - Enforcing security policies (e.g., no root containers)
-/// - Validating resource schemas
-/// - Enforcing resource quotas
-/// - Validating image sources
-///
-/// # Example
-///
-/// ```rust,no_run
-/// use kube::api::DynamicObject;
-/// use kube::core::admission::{AdmissionRequest, AdmissionResponse};
-/// use kubus::admission::ValidatingAdmissionHandler;
-/// use kubus::HandlerError;
-///
-/// struct MyValidator;
-///
-/// #[async_trait::async_trait]
-/// impl ValidatingAdmissionHandler for MyValidator {
-///     type Err = HandlerError;
-///
-///     async fn validate(
-///         &self,
-///         req: &AdmissionRequest<DynamicObject>,
-///     ) -> Result<AdmissionResponse, Self::Err> {
-///         // Validate the object
-///         if /* some condition */ false {
-///             Ok(AdmissionResponse::from(req).deny("Resource does not meet requirements"))
-///         } else {
-///             Ok(AdmissionResponse::from(req))
-///         }
-///     }
-/// }
-/// ```
 #[async_trait]
 pub trait ValidatingAdmissionHandler: Send + Sync {
     /// Error type returned by the handler
@@ -153,7 +76,6 @@ pub(crate) fn create_mutating_route<E: StdError + Send + Sync + 'static>(
                 for handler in handlers.iter() {
                     match handler.mutate(&req).await {
                         Ok(handler_res) => {
-                            // Merge patches from multiple handlers
                             res = merge_responses(res, handler_res);
                             info!(
                                 handler = handler.name(),
@@ -214,7 +136,6 @@ pub(crate) fn create_validating_route<E: StdError + Send + Sync + 'static>(
                 for handler in handlers.iter() {
                     match handler.validate(&req).await {
                         Ok(handler_res) => {
-                            // If any handler denies, the request is denied
                             if !handler_res.allowed {
                                 warn!(
                                     handler = handler.name(),
@@ -255,42 +176,38 @@ pub(crate) fn create_validating_route<E: StdError + Send + Sync + 'static>(
     }
 }
 
-/// Merges two admission responses, combining their patches
-///
-/// When multiple mutating handlers provide patches, this function combines them
-/// into a single patch array. The patches are applied in order, which means
-/// later patches can modify values set by earlier patches.
-fn merge_responses(mut base: AdmissionResponse, other: AdmissionResponse) -> AdmissionResponse {
-    // If the other response denies, use it
+fn merge_responses(base: AdmissionResponse, other: AdmissionResponse) -> AdmissionResponse {
+    use json_patch::Patch;
+    use serde_json::*;
+
     if !other.allowed {
         return other;
     }
 
-    // Combine patches from both responses
-    // Both patches are serialized as JSON arrays of patch operations
-    if let (Some(base_patch_bytes), Some(other_patch_bytes)) =
-        (base.patch.as_ref(), other.patch.as_ref())
-    {
-        // Deserialize both patches
-        if let (Ok(base_patches), Ok(other_patches)) = (
-            serde_json::from_slice::<Vec<serde_json::Value>>(base_patch_bytes),
-            serde_json::from_slice::<Vec<serde_json::Value>>(other_patch_bytes),
-        ) {
-            // Combine the patch operations
-            let mut combined = base_patches;
-            combined.extend_from_slice(&other_patches);
+    let Some(base_patch) = base.patch.as_ref() else {
+        return other;
+    };
+    let Some(other_patch) = other.patch.as_ref() else {
+        return base;
+    };
 
-            // Re-serialize the combined patches
-            if let Ok(combined_bytes) = serde_json::to_vec(&combined) {
-                base.patch = Some(combined_bytes);
-            }
-        }
-    } else if other.patch.is_some() {
-        // If only the other has patches, use them
-        base.patch = other.patch;
-    }
+    let (Ok(base_patches), Ok(other_patches)) = (
+        from_slice::<Vec<Value>>(base_patch),
+        from_slice::<Vec<Value>>(other_patch),
+    ) else {
+        return base;
+    };
 
-    base
+    let combined = [base_patches, other_patches]
+        .into_iter()
+        .flatten()
+        .collect::<Value>();
+
+    let Ok(patch) = from_value::<Patch>(json!(combined)) else {
+        return base;
+    };
+
+    other.with_patch(patch).unwrap_or(base)
 }
 
 #[cfg(test)]
@@ -300,7 +217,6 @@ mod tests {
     use kube::core::admission::AdmissionRequest;
     use serde_json::json;
 
-    // Test mutating handler
     struct TestMutator;
 
     #[async_trait::async_trait]
@@ -339,7 +255,6 @@ mod tests {
         }
     }
 
-    // Test validating handler
     struct TestValidator;
 
     #[async_trait::async_trait]
@@ -354,7 +269,6 @@ mod tests {
             &self,
             req: &AdmissionRequest<DynamicObject>,
         ) -> Result<AdmissionResponse, Self::Err> {
-            // Reject resources with name "reject-me"
             if req.object.as_ref().and_then(|o| o.metadata.name.as_deref()) == Some("reject-me") {
                 Ok(AdmissionResponse::from(req).deny("Resource name 'reject-me' is not allowed"))
             } else {
@@ -364,7 +278,6 @@ mod tests {
     }
 
     fn create_test_request(name: &str) -> AdmissionRequest<DynamicObject> {
-        // Create a minimal test request by deserializing from JSON
         let review_json = json!({
             "apiVersion": "admission.k8s.io/v1",
             "kind": "AdmissionReview",

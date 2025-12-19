@@ -951,7 +951,7 @@ dependencies = [
 
 [[package]]
 name = "kubus"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "async-trait",
  "bytes",
@@ -973,7 +973,7 @@ dependencies = [
 
 [[package]]
 name = "kubus_derive"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "proc-macro2",
  "quote",
