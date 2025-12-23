@@ -121,6 +121,10 @@ where
                 crate::admission::create_validating_route(self.validating_handlers);
             let mutate_handler = crate::admission::create_mutating_route(self.mutating_handlers);
 
+            let shutdown_signal = async {
+                tokio::signal::ctrl_c().await.ok();
+            };
+
             let addr = ([0, 0, 0, 0], 8443);
             let routes = warp::post()
                 .and(
@@ -135,18 +139,19 @@ where
                     .with(warp::trace::request()));
 
             if let Some(path) = self.tls_certs_path {
-                set.spawn(
-                    warp::serve(routes)
-                        .tls()
-                        .cert_path(path.join("tls.crt"))
-                        .key_path(path.join("tls.key"))
-                        .run(addr),
-                );
+                let (_, task) = warp::serve(routes)
+                    .tls()
+                    .cert_path(path.join("tls.crt"))
+                    .key_path(path.join("tls.key"))
+                    .bind_with_graceful_shutdown(addr, shutdown_signal);
+                set.spawn(task);
             } else {
                 tracing::warn!(
                     "admission webhook server running without TLS - not suitable for production"
                 );
-                set.spawn(warp::serve(routes).run(addr));
+                let (_, task) =
+                    warp::serve(routes).bind_with_graceful_shutdown(addr, shutdown_signal);
+                set.spawn(task);
             }
         }
 
