@@ -1,7 +1,7 @@
 [package]
 name = "kubus"
 description = "Derive based kubernetes operator framework"
-version = "0.5.3"
+version = "0.6.0"
 edition = "2024"
 homepage = "https://github.com/juliamertz/kubus"
 repository = "https://github.com/juliamertz/kubus"
@@ -9,8 +9,8 @@ license = "MIT"
 
 [dependencies]
 kubus_derive = { path = "../kubus_derive", version = "0.5.3" }
-kube = { version = "2.0.1", features = ["runtime", "derive"] }
-k8s-openapi = { version = "0.26.0", features = ["v1_34"] }
+kube = { version = "3", features = ["runtime", "derive"] }
+k8s-openapi = { version = "0.27", features = ["v1_34"] }
 json-patch = "4"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"

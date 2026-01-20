@@ -83,8 +83,8 @@ where
         let api = K::Scope::api(client.clone(), self.namespace());
         let name = self.name_unchecked();
 
-        if let Err(kube::Error::Api(kube::core::ErrorResponse { code: 404, .. })) =
-            api.get(&name).await
+        if let Err(kube::Error::Api(err)) = api.get(&name).await
+            && err.is_not_found()
         {
             self.apply_with_api(api).await?;
         }
@@ -106,7 +106,7 @@ where
 
         match api.get(&name).await {
             Ok(_) => Ok(true),
-            Err(kube::Error::Api(kube::core::ErrorResponse { code: 404, .. })) => Ok(false),
+            Err(kube::Error::Api(err)) if err.is_not_found() => Ok(false),
             err => {
                 err?;
                 Ok(false)
